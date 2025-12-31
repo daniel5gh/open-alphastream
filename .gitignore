@@ -1,0 +1,44 @@
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+dist/
+build/
+site/
+.eggs/
+*.egg-info/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.pytype/
+.cache/
+.ipynb_checkpoints
+
+# Rust
+target/
+rust/target/
+
+# IDEs/editors
+.vscode/
+.idea/
+*.iml
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Test data
+test_data/
