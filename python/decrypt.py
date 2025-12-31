@@ -9,9 +9,9 @@ Convert an encrypted ASVR file to plaintext ASVR-PLAIN per FILE_FORMAT_PLAINTEXT
   [ 16-byte header | zlib(sizes table) | plaintext frame blocks ]
 
 Usage:
-  python decrypt.py --scene-id 74596 --version 1.5.0 --base-url pov_mask.asvr \
-                    --input 74596/pov_mask-trailer.asvr \
-                    --output 74596/pov_mask-trailer-plain.asvr
+  python decrypt.py --scene-id 85342 --version 1.5.0 --base-url pov_mask.asvr \
+                    --input 85342/pov_mask.asvr \
+                    --output 85342/pov_mask.asvp
 
 See: FILE_FORMAT_PLAINTEXT.md
 """
