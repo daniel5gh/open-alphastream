@@ -7,11 +7,13 @@
 - **Runtime**: Thread pool size, async runtime type.
 - **Pools**: Connection pool size, worker pool size.
 - **Transport Caps/Timeouts**: Max connections, read/write timeouts, retry limits.
+- **Processing Types**: Triangles, bitmask, or both.
 
 ## Defaults and Overrides
 - Runtime: Default thread pool size 8, override range 1-64.
 - Pools: Default connection pool size 10, override range 1-100.
 - Transport: Default timeout 30 seconds, override range 1-300 seconds.
+- Processing: Default bitmask, options triangles/bitmask/both.
 
 ## Example Configuration
 
@@ -20,6 +22,15 @@ pub struct BuilderConfig {
     pub runtime_threads: usize, // Default: 8, Range: 1-64
     pub connection_pool_size: usize, // Default: 10, Range: 1-100
     pub timeout_seconds: u64, // Default: 30, Range: 1-300
+    pub processing_type: ProcessingType, // Default: Bitmask
+}
+```
+
+```rust
+pub enum ProcessingType {
+    Triangles,
+    Bitmask,
+    Both,
 }
 ```
 

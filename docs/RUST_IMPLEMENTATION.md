@@ -89,6 +89,7 @@ References:
 
 - Override $worker_\threads$ and per-pool sizing (io/decode/raster) via builder options.
 - Toggle to enable core pinning (off by default).
+- Enable/disable processing types (triangles, bitmask, or both) via builder options.
 - HTTP range concurrency and timeouts are configurable here and align with the Transport Abstraction.
 
 ## Async Scheduler Timebase & Rate Control
@@ -101,8 +102,8 @@ References:
 
 ## Frame Cache & Rasterization
 
-- Cache holds alpha bit masks keyed by frame index; LRU with size/fps-aware prefetch.
-- Rasterizer transforms alpha masks to requested bitmap size; scaling policy (nearest/bilinear) — TBD.
+- Cache holds alpha bit masks or triangle strips (or both) keyed by frame index; LRU with size/fps-aware prefetch. See [docs/tasks/10-rasterization-polystreams.md](docs/tasks/10-rasterization-polystreams.md) for triangle strip details.
+- Rasterizer transforms alpha masks to requested bitmap size or generates triangle strips; scaling policy (nearest/bilinear) — TBD.
 - Bitmap layout optimized for GPU upload (tightly packed, row-aligned); exact format — TBD.
 - Metadata-driven pipeline (dimensions, stride, version flags).
 - Instrumentation: hit/miss counters, stall metrics.
@@ -140,6 +141,7 @@ $$
 - Source management: load_source(source), close(); sources can be constructed/selected as HTTP, local file, or in-memory slice via transport constructors.
 - Rate control: set_rate(fps), get_rate().
 - Frame access: get_frame(frame_index, width, height) returns an R8 bitmap per the defined layout; when resizing, nearest-neighbor scaling is applied; cache-first with possible immediate decode escalation within a 12ms timebox; on failure returns None and sets the per-instance last error; retrieve via last_error().
+- Triangle access: get_triangle_strip_vertices(frame_index) -> Result<Vec<f32>, Error>, returning a Vec<f32> containing x,y positions in triangle strip order suitable for graphics APIs like wgpu with TriangleStrip topology. Triangle strip format: vertices are arranged sequentially where each set of three consecutive vertices forms a triangle, sharing edges for efficient rendering.
 - Diagnostics: last_error() returns {code, message} for this handle; clear_error() resets the handle's last error to None; get_metadata() exposes format/source metadata.
 - Lifecycle: start(), stop(); optional auto-start on source load — TBD.
 
@@ -178,6 +180,7 @@ $$
 - Benchmark suite and profiling hooks aligned with [AGENTS.md](AGENTS.md).
 - LRU-only eviction minimizes contention and bookkeeping cost.
 - Count-based cap chosen for deterministic memory footprint across varying frame sizes in R8.
+- Triangle strips: optional storage increases memory usage but enables efficient caller-side rasterization; configurable processing types balance performance trade-offs; see [docs/tasks/10-rasterization-polystreams.md](docs/tasks/10-rasterization-polystreams.md).
 
 ## Glossary
 
