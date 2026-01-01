@@ -1,0 +1,19 @@
+[package]
+name = "alphastream-rs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "libalphastream"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+bytes = "1"
+thiserror = "1"
+
+[[bin]]
+name = "demo"
+path = "src/bin/demo.rs"
