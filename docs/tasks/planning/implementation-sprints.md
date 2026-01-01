@@ -11,9 +11,9 @@ This document outlines the sprint-based implementation plan for the Alphastream 
 - Implement transport abstraction layer
 
 ### Tasks
-- [ ] [Task 01](docs/tasks/01-architecture-overview.md)
-- [ ] [Task 02](docs/tasks/02-format-abstraction.md)
-- [ ] [Task 03](docs/tasks/03-transport-abstraction.md)
+- [x] [Task 01](docs/tasks/01-architecture-overview.md)
+- [x] [Task 02](docs/tasks/02-format-abstraction.md)
+- [x] [Task 03](docs/tasks/03-transport-abstraction.md)
 
 ### Acceptance Criteria
 - Crate compiles successfully
