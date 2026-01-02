@@ -94,10 +94,8 @@ References:
 
 ## Async Scheduler Timebase & Rate Control
 
-- Timebase: index-driven at target_fps=60 with mapping $t_n = \frac{n}{60}$.
-- Rate control: adaptive backpressure; when behind, duplicate the last decoded frame; when oversupplied, skip frames to maintain cadence; no interpolation.
-- Prefetch and cache: prefetch_window=120 frames; cache_size=512 frames with LRU eviction.
-- Prefetch is constrained by the cache cap: $prefetch = \min(\text{prefetch\_window}, \text{remaining capacity})$.
+- Forward anticipation strategy: on frame request, fetch if not cached, evict distant frames, prefetch subsequent frames assuming forward playback.
+- Cache: size=512 frames with LRU eviction.
 - Priority handling: get_frame escalates the requested frame for immediate decode with a 12ms timebox; if not ready within the timebox, return nothing and set last error=Timeout on the handle.
 
 ## Frame Cache & Rasterization
