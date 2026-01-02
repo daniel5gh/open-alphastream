@@ -79,7 +79,28 @@ Async runtime with scheduler and cache demo
 ### Demo Milestone
 Polystream rasterization and resize demo
 
-## Sprint 5: APIs & Extras
+## Sprint 5: Parsing & Integration
+
+### Objectives
+- Implement ASVR and ASVP file parsing
+- Add decryption support for ASVR
+- Integrate formats with scheduler for polystream to rasterization flow
+
+### Tasks
+- [ ] [Task 20](docs/tasks/20-asvr-parsing.md)
+- [ ] [Task 21](docs/tasks/21-asvp-parsing.md)
+- [ ] [Task 22](docs/tasks/22-decryption.md)
+- [ ] [Task 23](docs/tasks/23-format-integration.md)
+
+### Acceptance Criteria
+- ASVR and ASVP files parsed correctly
+- Decryption matches Python implementation
+- End-to-end flow from file to rasterized output
+
+### Demo Milestone
+Parsing, decryption, integration demo
+
+## Sprint 6: APIs & Bindings
 
 ### Objectives
 - Create public API facade

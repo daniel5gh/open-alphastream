@@ -19,5 +19,9 @@
 17. [17-builder-config.md](docs/tasks/17-builder-config.md)
 18. [18-metadata-timebase.md](docs/tasks/18-metadata-timebase.md)
 19. [19-triangle-strip-generation.md](docs/tasks/19-triangle-strip-generation.md)
+20. [20-asvr-parsing.md](docs/tasks/20-asvr-parsing.md)
+21. [21-asvp-parsing.md](docs/tasks/21-asvp-parsing.md)
+22. [22-decryption.md](docs/tasks/22-decryption.md)
+23. [23-format-integration.md](docs/tasks/23-format-integration.md)
 
 Note: Legacy filenames remain in the repository; this index defines the canonical execution order.
