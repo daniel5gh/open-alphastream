@@ -49,9 +49,9 @@ HTTP/local/in-memory transport implementations demo
 - Implement frame cache policy
 
 ### Tasks
-- [ ] [Task 07](docs/tasks/07-async-runtime-concurrency.md)
-- [ ] [Task 08](docs/tasks/08-scheduler-rate-control.md)
-- [ ] [Task 09](docs/tasks/09-frame-cache-policy.md)
+- [x] [Task 07](docs/tasks/07-async-runtime-concurrency.md)
+- [x] [Task 08](docs/tasks/08-scheduler-rate-control.md)
+- [x] [Task 09](docs/tasks/09-frame-cache-policy.md)
 
 ### Acceptance Criteria
 - Async operations execute concurrently
