@@ -74,6 +74,15 @@ impl Runtime {
     {
         self.runtime.spawn(future)
     }
+
+    /// Spawn a blocking task on this runtime and return a JoinHandle to await its result.
+    pub fn spawn_blocking<F, T>(&self, f: F) -> tokio::task::JoinHandle<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        self.runtime.spawn_blocking(f)
+    }
 }
 
 #[cfg(test)]
