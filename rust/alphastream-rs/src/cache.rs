@@ -2,12 +2,12 @@
 // This module implements an LRU (Least Recently Used) cache for frames with concurrency support.
 // It uses a thread-safe LRU cache to store up to 512 frames, evicting the least recently used when full.
 
+// Re-export FrameData from formats module
+pub use crate::formats::FrameData;
+
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, RwLock};
-
-/// Type alias for frame data. In a real implementation, this would be a proper Frame struct.
-pub type FrameData = Vec<u8>;
 
 /// Thread-safe LRU cache for frame data.
 /// Uses Arc<RwLock<>> to allow concurrent access from multiple threads.
@@ -97,11 +97,15 @@ mod tests {
     #[test]
     fn test_cache_insert_and_get() {
         let cache = FrameCache::default();
-        let data = vec![1, 2, 3, 4];
+        let data = FrameData {
+            channel_count: 1,
+            channel_sizes: vec![4],
+            channel_data: vec![1, 2, 3, 4],
+        };
 
         cache.insert(1, data.clone());
         let retrieved = cache.get(1).unwrap();
-        assert_eq!(retrieved, data);
+        assert_eq!(retrieved.channel_data, data.channel_data);
     }
 
     #[test]
@@ -113,9 +117,12 @@ mod tests {
     #[test]
     fn test_cache_capacity() {
         let cache = FrameCache::new(2);
-        cache.insert(1, vec![1]);
-        cache.insert(2, vec![2]);
-        cache.insert(3, vec![3]); // Should evict 1
+        let data1 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![1] };
+        let data2 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![2] };
+        let data3 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![3] };
+        cache.insert(1, data1);
+        cache.insert(2, data2);
+        cache.insert(3, data3); // Should evict 1
 
         assert_eq!(cache.len(), 2);
         assert!(cache.get(1).is_none());
@@ -126,10 +133,13 @@ mod tests {
     #[test]
     fn test_lru_behavior() {
         let cache = FrameCache::new(2);
-        cache.insert(1, vec![1]);
-        cache.insert(2, vec![2]);
+        let data1 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![1] };
+        let data2 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![2] };
+        let data3 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![3] };
+        cache.insert(1, data1);
+        cache.insert(2, data2);
         cache.get(1); // Access 1, making it most recent
-        cache.insert(3, vec![3]); // Should evict 2
+        cache.insert(3, data3); // Should evict 2
 
         assert!(cache.get(1).is_some());
         assert!(cache.get(2).is_none());
@@ -141,7 +151,8 @@ mod tests {
         let cache = FrameCache::default();
         assert!(cache.is_empty());
 
-        cache.insert(1, vec![1]);
+        let data = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![1] };
+        cache.insert(1, data);
         assert!(!cache.is_empty());
         assert_eq!(cache.len(), 1);
         assert!(cache.contains(&1));
@@ -154,12 +165,14 @@ mod tests {
     #[test]
     fn test_clone() {
         let cache = FrameCache::default();
-        cache.insert(1, vec![1]);
+        let data = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![1] };
+        cache.insert(1, data);
 
         let cache2 = cache.clone();
         assert!(cache2.contains(&1));
 
-        cache2.insert(2, vec![2]);
+        let data2 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![2] };
+        cache2.insert(2, data2);
         assert!(cache.contains(&2)); // Shared state
     }
 }
