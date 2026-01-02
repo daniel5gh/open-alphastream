@@ -30,9 +30,9 @@ Basic crate structure and transport abstraction demo
 - Implement in-memory transport
 
 ### Tasks
-- [ ] [Task 04](docs/tasks/04-transport-http.md)
-- [ ] [Task 05](docs/tasks/05-transport-local.md)
-- [ ] [Task 06](docs/tasks/06-transport-in-memory.md)
+- [x] [Task 04](docs/tasks/04-transport-http.md)
+- [x] [Task 05](docs/tasks/05-transport-local.md)
+- [x] [Task 06](docs/tasks/06-transport-in-memory.md)
 
 ### Acceptance Criteria
 - All transport implementations pass unit tests
