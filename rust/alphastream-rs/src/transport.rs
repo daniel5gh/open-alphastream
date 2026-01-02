@@ -280,3 +280,48 @@ impl Transport for HttpTransport {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_mock_transport() {
+        let reader = MockTransport::open("mock://data").await.unwrap();
+        assert_eq!(MockTransport::len(&reader), 21);
+        let data = MockTransport::read_range(&reader, 0, 10).await.unwrap();
+        assert_eq!(data.as_ref(), b"mock data ");
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_transport() {
+        use tempfile::NamedTempFile;
+        use std::io::Write;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let data = b"Hello, world! This is test data.";
+        temp_file.write_all(data).unwrap();
+        let path = temp_file.path().to_str().unwrap();
+
+        let reader = InMemoryTransport::open(path).await.unwrap();
+        assert_eq!(InMemoryTransport::len(&reader), data.len() as u64);
+        let read_data = InMemoryTransport::read_range(&reader, 0, 13).await.unwrap();
+        assert_eq!(read_data.as_ref(), b"Hello, world!");
+    }
+
+    #[tokio::test]
+    async fn test_local_transport() {
+        use tempfile::NamedTempFile;
+        use std::io::Write;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let data = b"Local transport test data.";
+        temp_file.write_all(data).unwrap();
+        let path = temp_file.path().to_str().unwrap();
+
+        let reader = LocalTransport::open(path).await.unwrap();
+        assert_eq!(LocalTransport::len(&reader), data.len() as u64);
+        let read_data = LocalTransport::read_range(&reader, 6, 9).await.unwrap();
+        assert_eq!(read_data.as_ref(), b"transport");
+    }
+}

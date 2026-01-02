@@ -9,6 +9,7 @@ dependencies = [
  "bytes",
  "memmap2",
  "reqwest",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
