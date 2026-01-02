@@ -42,7 +42,7 @@ impl FrameCache {
     /// Accessing a frame marks it as recently used.
     pub fn get(&self, frame_index: usize) -> Option<FrameData> {
         let mut cache = self.cache.write().unwrap();
-        cache.get(&frame_index).cloned()
+        cache.get(&frame_index).map(|fd| fd.clone())
     }
 
     /// Check if a frame is in the cache without marking it as recently used.
@@ -98,14 +98,14 @@ mod tests {
     fn test_cache_insert_and_get() {
         let cache = FrameCache::default();
         let data = FrameData {
-            channel_count: 1,
-            channel_sizes: vec![4],
-            channel_data: vec![1, 2, 3, 4],
+            polystream: vec![1, 2, 3, 4],
+            bitmap: None,
+            triangle_strip: None,
         };
 
         cache.insert(1, data.clone());
         let retrieved = cache.get(1).unwrap();
-        assert_eq!(retrieved.channel_data, data.channel_data);
+        assert_eq!(retrieved.polystream, data.polystream);
     }
 
     #[test]
@@ -117,9 +117,9 @@ mod tests {
     #[test]
     fn test_cache_capacity() {
         let cache = FrameCache::new(2);
-        let data1 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![1] };
-        let data2 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![2] };
-        let data3 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![3] };
+        let data1 = FrameData { polystream: vec![1], bitmap: None, triangle_strip: None };
+        let data2 = FrameData { polystream: vec![2], bitmap: None, triangle_strip: None };
+        let data3 = FrameData { polystream: vec![3], bitmap: None, triangle_strip: None };
         cache.insert(1, data1);
         cache.insert(2, data2);
         cache.insert(3, data3); // Should evict 1
@@ -133,9 +133,9 @@ mod tests {
     #[test]
     fn test_lru_behavior() {
         let cache = FrameCache::new(2);
-        let data1 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![1] };
-        let data2 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![2] };
-        let data3 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![3] };
+        let data1 = FrameData { polystream: vec![1], bitmap: None, triangle_strip: None };
+        let data2 = FrameData { polystream: vec![2], bitmap: None, triangle_strip: None };
+        let data3 = FrameData { polystream: vec![3], bitmap: None, triangle_strip: None };
         cache.insert(1, data1);
         cache.insert(2, data2);
         cache.get(1); // Access 1, making it most recent
@@ -151,7 +151,7 @@ mod tests {
         let cache = FrameCache::default();
         assert!(cache.is_empty());
 
-        let data = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![1] };
+        let data = FrameData { polystream: vec![1], bitmap: None, triangle_strip: None };
         cache.insert(1, data);
         assert!(!cache.is_empty());
         assert_eq!(cache.len(), 1);
@@ -165,13 +165,13 @@ mod tests {
     #[test]
     fn test_clone() {
         let cache = FrameCache::default();
-        let data = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![1] };
+        let data = FrameData { polystream: vec![1], bitmap: None, triangle_strip: None };
         cache.insert(1, data);
 
         let cache2 = cache.clone();
         assert!(cache2.contains(&1));
 
-        let data2 = FrameData { channel_count: 1, channel_sizes: vec![1], channel_data: vec![2] };
+        let data2 = FrameData { polystream: vec![2], bitmap: None, triangle_strip: None };
         cache2.insert(2, data2);
         assert!(cache.contains(&2)); // Shared state
     }

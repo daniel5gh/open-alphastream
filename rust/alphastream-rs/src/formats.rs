@@ -42,12 +42,12 @@ pub struct Metadata {
 /// A decoded frame containing polystream data
 #[derive(Debug, Clone)]
 pub struct FrameData {
-    /// Number of channels (polylines) in this frame
-    pub channel_count: u32,
-    /// Sizes of each channel payload in bytes
-    pub channel_sizes: Vec<u32>,
-    /// Concatenated channel payloads
-    pub channel_data: Vec<u8>,
+    /// Raw polystream data
+    pub polystream: Vec<u8>,
+    /// Processed R8 bitmap data
+    pub bitmap: Option<Vec<u8>>,
+    /// Processed triangle strip vertices
+    pub triangle_strip: Option<Vec<f32>>,
 }
 
 /// The ASFormat trait defines the interface for parsing AlphaStream formats
@@ -230,9 +230,9 @@ impl<R: Read + Seek> ASFormat for ASVRFormat<R> {
         }
 
         Ok(FrameData {
-            channel_count,
-            channel_sizes,
-            channel_data,
+            polystream: channel_data,
+            bitmap: None,
+            triangle_strip: None,
         })
     }
 }
@@ -343,9 +343,9 @@ impl<R: Read + Seek> ASFormat for ASVPFormat<R> {
         }
 
         Ok(FrameData {
-            channel_count,
-            channel_sizes,
-            channel_data,
+            polystream: channel_data,
+            bitmap: None,
+            triangle_strip: None,
         })
     }
 }

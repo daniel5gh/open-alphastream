@@ -12,6 +12,14 @@ use crate::formats::{ASFormat, ASVRFormat, ASVPFormat, FormatError};
 use crate::rasterizer::PolystreamRasterizer;
 use crate::scheduler::{Scheduler, Task};
 
+/// Processing mode for rasterization
+#[derive(Debug, Clone)]
+pub enum ProcessingMode {
+    Bitmap,
+    TriangleStrip,
+    Both,
+}
+
 /// High-level AlphaStream processor
 pub struct AlphaStreamProcessor {
     /// Frame cache for decoded polystream data
@@ -19,10 +27,12 @@ pub struct AlphaStreamProcessor {
     /// Task scheduler for frame processing
     scheduler: Arc<Mutex<Scheduler>>,
     /// Format parser (either ASVR or ASVP)
-    format: Box<dyn ASFormat + Send + Sync>,
+    format: Arc<Mutex<Box<dyn ASFormat + Send + Sync>>>,
     /// Output dimensions
     width: u32,
     height: u32,
+    /// Processing mode
+    mode: ProcessingMode,
 }
 
 impl AlphaStreamProcessor {
@@ -34,9 +44,10 @@ impl AlphaStreamProcessor {
         base_url: &[u8],
         width: u32,
         height: u32,
+        mode: ProcessingMode,
     ) -> Result<Self, FormatError> {
         let file = File::open(file_path)?;
-        let format = Box::new(ASVRFormat::new(file, scene_id, version, base_url)?);
+        let format = Arc::new(Mutex::new(Box::new(ASVRFormat::new(file, scene_id, version, base_url)?) as Box<dyn ASFormat + Send + Sync>));
         let cache = FrameCache::default();
         let scheduler = Arc::new(Mutex::new(Scheduler::new()));
 
@@ -46,13 +57,14 @@ impl AlphaStreamProcessor {
             format,
             width,
             height,
+            mode,
         })
     }
 
     /// Create a new processor for ASVP (plaintext) files
-    pub fn new_asvp(file_path: &str, width: u32, height: u32) -> Result<Self, FormatError> {
+    pub fn new_asvp(file_path: &str, width: u32, height: u32, mode: ProcessingMode) -> Result<Self, FormatError> {
         let file = File::open(file_path)?;
-        let format = Box::new(ASVPFormat::new(file)?);
+        let format = Arc::new(Mutex::new(Box::new(ASVPFormat::new(file)?) as Box<dyn ASFormat + Send + Sync>));
         let cache = FrameCache::default();
         let scheduler = Arc::new(Mutex::new(Scheduler::new()));
 
@@ -62,12 +74,93 @@ impl AlphaStreamProcessor {
             format,
             width,
             height,
+            mode,
         })
     }
 
     /// Get metadata about the stream
-    pub fn metadata(&mut self) -> Result<crate::formats::Metadata, FormatError> {
-        self.format.metadata()
+    pub async fn metadata(&self) -> Result<crate::formats::Metadata, FormatError> {
+        let mut format = self.format.lock().await;
+        format.metadata()
+    }
+
+    fn parse_polystream(polystream: &[u8]) -> (u32, Vec<u32>, &[u8]) {
+        let channel_count = u32::from_le_bytes(polystream[0..4].try_into().unwrap());
+        let mut channel_sizes = Vec::new();
+        for i in 0..channel_count as usize {
+            let offset = 4 + i * 4;
+            let size = u32::from_le_bytes(polystream[offset..offset+4].try_into().unwrap());
+            channel_sizes.push(size);
+        }
+        let data_start = 4 + (channel_count as usize) * 4;
+        let channel_data = &polystream[data_start..];
+        (channel_count, channel_sizes, channel_data)
+    }
+
+    /// Get a rasterized frame (R8 mask)
+    pub fn get_frame(&self, frame_index: usize, _width: u32, _height: u32) -> Option<Vec<u8>> {
+        if let Some(frame_data) = self.cache.get(frame_index) {
+            if frame_data.bitmap.is_some() {
+                return frame_data.bitmap.clone();
+            }
+        }
+        // trigger processing
+        let format = Arc::clone(&self.format);
+        let cache = self.cache.clone();
+        let width = self.width;
+        let height = self.height;
+        let mode = self.mode.clone();
+        tokio::spawn(async move {
+            let mut format = format.lock().await;
+            if let Ok(frame_data) = format.decode_frame(frame_index as u32) {
+                let (_channel_count, channel_sizes, channel_data) = Self::parse_polystream(&frame_data.polystream);
+                let mut bitmap = None;
+                let mut triangle_strip = None;
+
+                if matches!(mode, ProcessingMode::Bitmap | ProcessingMode::Both) {
+                    // rasterize bitmap
+                    let mut mask = vec![0u8; (width * height) as usize];
+                    let mut offset = 0;
+                    for &size in &channel_sizes {
+                        let channel_data_slice = &channel_data[offset..offset + size as usize];
+                        let channel_mask = PolystreamRasterizer::rasterize(channel_data_slice, width, height);
+                        for (i, &pixel) in channel_mask.iter().enumerate() {
+                            if pixel > 0 {
+                                mask[i] = 255;
+                            }
+                        }
+                        offset += size as usize;
+                    }
+                    bitmap = Some(mask);
+                }
+
+                if matches!(mode, ProcessingMode::TriangleStrip | ProcessingMode::Both) {
+                    // triangle strip
+                    let mut vertices = Vec::new();
+                    let mut offset = 0;
+                    for &size in &channel_sizes {
+                        let channel_data_slice = &channel_data[offset..offset + size as usize];
+                        let channel_strip = PolystreamRasterizer::polystream_to_triangle_strip(channel_data_slice);
+                        vertices.extend(channel_strip);
+                        offset += size as usize;
+                    }
+                    triangle_strip = Some(vertices);
+                }
+
+                let processed_frame = FrameData {
+                    polystream: frame_data.polystream,
+                    bitmap,
+                    triangle_strip,
+                };
+                cache.insert(frame_index, processed_frame);
+            }
+        });
+        None
+    }
+
+    /// Get triangle strip vertices for a frame
+    pub fn get_triangle_strip_vertices(&self, frame_index: usize) -> Option<Vec<f32>> {
+        self.cache.get(frame_index).and_then(|fd| fd.triangle_strip.clone())
     }
 
     /// Request a frame for processing
@@ -88,67 +181,14 @@ impl AlphaStreamProcessor {
     pub async fn process_tasks(&mut self) -> Result<(), FormatError> {
         let mut scheduler = self.scheduler.lock().await;
         while let Some(task) = scheduler.next_task() {
-            let frame_data = self.format.decode_frame(task.frame_index as u32)?;
+            let mut format = self.format.lock().await;
+            let frame_data = format.decode_frame(task.frame_index as u32)?;
             self.cache.insert(task.frame_index, frame_data);
             scheduler.complete_task();
         }
         Ok(())
     }
 
-    /// Get a rasterized frame (R8 mask)
-    pub async fn get_frame(&mut self, frame_index: u32) -> Result<Vec<u8>, FormatError> {
-        // Ensure frame is available
-        self.request_frame(frame_index).await?;
-        self.process_tasks().await?;
-
-        // Get from cache and rasterize
-        if let Some(frame_data) = self.cache.get(frame_index as usize) {
-            let mut mask = vec![0u8; (self.width * self.height) as usize];
-
-            // Rasterize each channel
-            let mut offset = 0;
-            for &size in &frame_data.channel_sizes {
-                let channel_data = &frame_data.channel_data[offset..offset + size as usize];
-                let channel_mask = PolystreamRasterizer::rasterize(channel_data, self.width, self.height);
-
-                // Combine with existing mask (OR operation for multiple channels)
-                for (i, &pixel) in channel_mask.iter().enumerate() {
-                    if pixel > 0 {
-                        mask[i] = 255;
-                    }
-                }
-                offset += size as usize;
-            }
-
-            Ok(mask)
-        } else {
-            Err(FormatError::InvalidFormat("Frame not found in cache".to_string()))
-        }
-    }
-
-    /// Get triangle strip vertices for a frame
-    pub async fn get_triangle_strip(&mut self, frame_index: u32) -> Result<Vec<f32>, FormatError> {
-        // Ensure frame is available
-        self.request_frame(frame_index).await?;
-        self.process_tasks().await?;
-
-        if let Some(frame_data) = self.cache.get(frame_index as usize) {
-            let mut vertices = Vec::new();
-
-            // Convert each channel to triangle strip
-            let mut offset = 0;
-            for &size in &frame_data.channel_sizes {
-                let channel_data = &frame_data.channel_data[offset..offset + size as usize];
-                let channel_strip = PolystreamRasterizer::polystream_to_triangle_strip(channel_data);
-                vertices.extend(channel_strip);
-                offset += size as usize;
-            }
-
-            Ok(vertices)
-        } else {
-            Err(FormatError::InvalidFormat("Frame not found in cache".to_string()))
-        }
-    }
 }
 
 #[cfg(test)]
@@ -216,20 +256,25 @@ mod tests {
     #[tokio::test]
     async fn test_asvp_processor() {
         let test_file = create_test_asvp();
-        let mut processor = AlphaStreamProcessor::new_asvp(
+        let processor = AlphaStreamProcessor::new_asvp(
             test_file.path().to_str().unwrap(),
             16,
             16,
+            ProcessingMode::Both,
         ).unwrap();
 
-        let metadata = processor.metadata().unwrap();
+        let metadata = processor.metadata().await.unwrap();
         assert_eq!(metadata.frame_count, 1);
 
-        let frame = processor.get_frame(0).await.unwrap();
-        assert_eq!(frame.len(), 256); // 16x16
+        // trigger processing
+        let _ = processor.get_frame(0, 16, 16);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        let frame = processor.get_frame(0, 16, 16).unwrap();
+        assert_eq!(frame.len(), 256);
 
-        let vertices = processor.get_triangle_strip(0).await.unwrap();
-        // Empty polyline should give empty vertices
+        let _ = processor.get_triangle_strip_vertices(0);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        let vertices = processor.get_triangle_strip_vertices(0).unwrap();
         assert_eq!(vertices.len(), 0);
     }
 }
