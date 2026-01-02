@@ -23,5 +23,9 @@
 21. [21-asvp-parsing.md](docs/tasks/21-asvp-parsing.md)
 22. [22-decryption.md](docs/tasks/22-decryption.md)
 23. [23-format-integration.md](docs/tasks/23-format-integration.md)
+24. [24-lru-cache.md](docs/tasks/24-lru-cache.md)
+25. [25-prefetching.md](docs/tasks/25-prefetching.md)
+26. [26-thread-safety-cache.md](docs/tasks/26-thread-safety-cache.md)
+27. [27-cache-scheduler-integration.md](docs/tasks/27-cache-scheduler-integration.md)
 
 Note: Legacy filenames remain in the repository; this index defines the canonical execution order.
