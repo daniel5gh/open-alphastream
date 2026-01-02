@@ -87,10 +87,10 @@ Polystream rasterization and resize demo
 - Integrate formats with scheduler for polystream to rasterization flow
 
 ### Tasks
-- [ ] [Task 20](docs/tasks/20-asvr-parsing.md)
-- [ ] [Task 21](docs/tasks/21-asvp-parsing.md)
-- [ ] [Task 22](docs/tasks/22-decryption.md)
-- [ ] [Task 23](docs/tasks/23-format-integration.md)
+- [x] [Task 20](docs/tasks/20-asvr-parsing.md)
+- [x] [Task 21](docs/tasks/21-asvp-parsing.md)
+- [x] [Task 22](docs/tasks/22-decryption.md)
+- [x] [Task 23](docs/tasks/23-format-integration.md)
 
 ### Acceptance Criteria
 - ASVR and ASVP files parsed correctly
@@ -100,7 +100,21 @@ Polystream rasterization and resize demo
 ### Demo Milestone
 Parsing, decryption, integration demo
 
-## Sprint 6: APIs & Bindings
+## Sprint 6: Parsing & Integration
+
+### Objectives
+- Refactor caching strategy to the Forward anticipation strategy 
+
+### Tasks
+- TBD
+
+### Acceptance Criteria
+- TBD
+
+### Demo Milestone
+Parsing, decryption, integration demo
+
+## Sprint 7: APIs & Bindings
 
 ### Objectives
 - Create public API facade
