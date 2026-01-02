@@ -70,6 +70,7 @@ Async runtime with scheduler and cache demo
 ### Tasks
 - [x] [Task 10](docs/tasks/10-rasterization-polystreams.md)
 - [x] [Task 11](docs/tasks/11-rasterization-resize.md)
+- [x] [Task 19](docs/tasks/19-triangle-strip-generation.md)
 
 ### Acceptance Criteria
 - Polystreams render correctly

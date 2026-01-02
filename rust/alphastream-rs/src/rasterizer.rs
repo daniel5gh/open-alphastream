@@ -26,6 +26,46 @@ impl PolystreamRasterizer {
         Self::scanline_fill(&edges, width, height)
     }
 
+    /// Converts a polystream into a triangle strip of vertices.
+    /// Parses the polystream into polygon vertices, then triangulates using
+    /// fan triangulation and outputs vertices in triangle strip order.
+    ///
+    /// # Arguments
+    /// * `polystream` - The raw bytes of the polystream data.
+    ///
+    /// # Returns
+    /// A Vec<f32> containing x,y pairs for each vertex in the triangle strip.
+    pub fn polystream_to_triangle_strip(polystream: &[u8]) -> Vec<f32> {
+        let points = Self::decode_polystream(polystream);
+        if points.len() < 3 {
+            return vec![];
+        }
+        // If the polygon is closed (last point equals first), remove the duplicate
+        let vertices = if points[0] == *points.last().unwrap() && points.len() > 1 {
+            &points[0..points.len() - 1]
+        } else {
+            &points
+        };
+        if vertices.len() < 3 {
+            return vec![];
+        }
+        // Fan triangulation: generate triangles v0,v1,v2; v0,v2,v3; ... v0,vn-2,vn-1
+        // Output as strip: v0,v1,v2,v0,v2,v3,...,v0,vn-2,vn-1
+        let mut strip = vec![];
+        for i in 0..vertices.len() - 2 {
+            strip.push(vertices[0]);
+            strip.push(vertices[i + 1]);
+            strip.push(vertices[i + 2]);
+        }
+        // Convert to Vec<f32> with x,y pairs
+        let mut result = vec![];
+        for (x, y) in strip {
+            result.push(x as f32);
+            result.push(y as f32);
+        }
+        result
+    }
+
     /// Decodes the polystream bytes into a list of (x, y) points.
     /// First 4 bytes: u16 x0, y0 little-endian.
     /// Then pairs of i8 dx, dy, accumulated.
@@ -144,6 +184,7 @@ mod tests {
         // x0=0, y0=0, dx=15 dy=0, dx=-8 dy=15, dx=-7 dy=-15
         let data = vec![
             0, 0, // x0=0, y0=0
+            0, 0, // y0=0 (little-endian u16)
             15, 0, // dx=15, dy=0 -> (15,0)
             248, 15, // dx=-8 (248 as i8), dy=15 -> (7,15)
             249, 241, // dx=-7 (249), dy=-15 (241) -> (0,0)
@@ -152,6 +193,20 @@ mod tests {
         assert_eq!(mask.len(), 256);
         // Check that some pixels are filled
         assert!(mask.iter().any(|&x| x == 255));
+    }
+
+    #[test]
+    fn test_polystream_to_triangle_strip_triangle() {
+        // Triangle: (0,0), (15,0), (7,15), closed
+        let data = vec![
+            0, 0, // x0=0, y0=0
+            0, 0, // y0=0 (little-endian u16)
+            15, 0, // dx=15, dy=0 -> (15,0)
+            248, 15, // dx=-8, dy=15 -> (7,15)
+            249, 241, // dx=-7, dy=-15 -> (0,0)
+        ];
+        let strip = PolystreamRasterizer::polystream_to_triangle_strip(&data);
+        assert_eq!(strip, vec![0.0, 0.0, 15.0, 0.0, 7.0, 15.0]);
     }
 
     #[test]
@@ -167,5 +222,43 @@ mod tests {
         let input = vec![255]; // 1x1
         let output = resize_nearest_neighbor(&input, 1, 1, 2, 2);
         assert_eq!(output, vec![255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_rasterize_square() {
+        // Square: (0,0), (10,0), (10,10), (0,10), closed
+        // x0=0, y0=0, dx=10 dy=0, dx=0 dy=10, dx=-10 dy=0, dx=0 dy=-10
+        let data = vec![
+            0, 0, // x0=0
+            0, 0, // y0=0
+            10, 0, // dx=10, dy=0 -> (10,0)
+            0, 10, // dx=0, dy=10 -> (10,10)
+            246, 0, // dx=-10, dy=0 -> (0,10)
+            0, 246, // dx=0, dy=-10 -> (0,0)
+        ];
+        let mask = PolystreamRasterizer::rasterize(&data, 16, 16);
+        assert_eq!(mask.len(), 256);
+        // Check that pixels inside the square are filled, e.g., (5,5)
+        let idx = 5 * 16 + 5;
+        assert_eq!(mask[idx], 255);
+        // Check that outside is not, e.g., (15,15)
+        let idx_out = 15 * 16 + 15;
+        assert_eq!(mask[idx_out], 0);
+    }
+
+    #[test]
+    fn test_triangle_strip_square() {
+        // Square: (0,0), (10,0), (10,10), (0,10), closed
+        let data = vec![
+            0, 0, // x0=0
+            0, 0, // y0=0
+            10, 0, // dx=10, dy=0 -> (10,0)
+            0, 10, // dx=0, dy=10 -> (10,10)
+            246, 0, // dx=-10, dy=0 -> (0,10)
+            0, 246, // dx=0, dy=-10 -> (0,0)
+        ];
+        let strip = PolystreamRasterizer::polystream_to_triangle_strip(&data);
+        // Fan triangulation strip: v0,v1,v2,v0,v2,v3
+        assert_eq!(strip, vec![0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 0.0, 10.0, 10.0, 0.0, 10.0]);
     }
 }

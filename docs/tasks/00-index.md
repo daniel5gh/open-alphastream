@@ -18,5 +18,6 @@
 16. [16-integration-tests.md](docs/tasks/16-integration-tests.md)
 17. [17-builder-config.md](docs/tasks/17-builder-config.md)
 18. [18-metadata-timebase.md](docs/tasks/18-metadata-timebase.md)
+19. [19-triangle-strip-generation.md](docs/tasks/19-triangle-strip-generation.md)
 
 Note: Legacy filenames remain in the repository; this index defines the canonical execution order.
