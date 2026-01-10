@@ -121,9 +121,9 @@ Parsing, decryption, integration demo
 - [x] [Task 26/32](docs/tasks/26-thread-safety-cache.md): Ensure thread-safe cache operations (consolidated) _(Completed: FrameCache and all cache operations are fully thread-safe using Arc<RwLock<...>>. All concurrent access scenarios are covered by unit and integration tests. All tests pass, confirming correctness and stability.)_
 - [x] [Task 27/33](docs/tasks/27-cache-scheduler-integration.md): Integrate cache and scheduler for coordinated rate control and prefetching (consolidated) _(Completed: Cache and scheduler integration enables adaptive prefetching, rate limiting, and backpressure. Scheduler now coordinates with cache state to prevent overfilling and ensures efficient resource usage. All integration and unit tests pass, confirming correctness and stability.)_
 - [x] [Task 34](docs/tasks/34-lru-prefetch-threadsafe-tests.md): Expand unit/integration tests for LRU, prefetching, thread safety, and scheduler integration _(Completed: Additional edge case and concurrency tests for LRU cache, prefetching, thread safety, and cache-scheduler integration were added to integration_tests.rs. All tests pass, confirming correctness and stability.)_
-- [ ] [Task 35](docs/tasks/35-architecture-api-docs-update.md): Update documentation for new architecture and API
-- [ ] Documentation deliverables: Update ADR and PRD for all new architecture and API changes
-- [ ] CI/code review: Ensure all new features are covered by CI and pass code review
+- [x] [Task 35](docs/tasks/35-architecture-api-docs-update.md): Update documentation for new architecture and API _(Completed: Documentation updated for new architecture, API, and C ABI. Architecture diagram added. All public API and C ABI docs are current. All tests pass, confirming stability.)_
+- [x] Documentation deliverables: Update ADR and PRD for all new architecture and API changes _(Completed: ADRs and PRD updated to reflect new architecture, API, and C ABI. Diagram included in documentation.)_
+- [x] CI/code review: Ensure all new features are covered by CI and pass code review _(Completed: All new features and documentation changes reviewed and verified in CI. All tests pass.)_
 
 ### Acceptance Criteria
 - Handle/processor consolidation and C ABI refactor completed
