@@ -209,14 +209,22 @@ pub extern "C" fn CV_init(
         let chandle = &mut *handle;
         chandle.clear_error();
         if let Ok(path) = CStr::from_ptr(base_url).to_str() {
-            match api::AlphaStreamProcessor::new_asvp(path, width, height, ProcessingMode::Both) {
+            let builder = api::AlphaStreamProcessorBuilder::new()
+                .runtime_threads(8)
+                .connection_pool_size(10)
+                .timeout_seconds((init_timeout_ms / 1000).max(1) as u64)
+                .cache_capacity(l1_buffer_length as usize)
+                .prefetch_window(l1_buffer_init_length as usize)
+                .processing_mode(api::ProcessingMode::Both);
+
+            return match builder.build_asvp(path, width, height) {
                 Ok(proc) => {
                     chandle.processor = Some(Box::new(proc));
-                    return true;
+                    true
                 }
                 Err(e) => {
                     chandle.set_error(2, &format!("Init error: {e}"));
-                    return false;
+                    false
                 }
             }
         } else {

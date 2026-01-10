@@ -1,11 +1,107 @@
 //! API facade module
-//!
-//! This module provides the high-level API for AlphaStream processing,
-//! integrating the format parsers, cache, scheduler, and rasterizer.
-//!
-//! For novices: This is like a "manager" that coordinates different parts of the system.
-//! It handles opening files, processing frames asynchronously (meaning tasks can run in the background
-//! without blocking the main program), and provides methods to get processed frames.
+
+/// Builder configuration for AlphaStreamProcessor
+/// Allows configuration of runtime, cache, scheduler, and transport options.
+#[derive(Debug, Clone)]
+pub struct AlphaStreamProcessorBuilder {
+    runtime_threads: usize,           // Default: 8, Range: 1-64
+    connection_pool_size: usize,      // Default: 10, Range: 1-100
+    timeout_seconds: u64,             // Default: 30, Range: 1-300
+    cache_capacity: usize,            // Default: 512, Range: 1-4096
+    prefetch_window: usize,           // Default: 10, Range: 1-100
+    processing_mode: ProcessingMode,  // Default: Bitmap
+}
+
+/// Processing type for builder config (matches ProcessingMode)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuilderProcessingType {
+    Triangles,
+    Bitmask,
+    Both,
+}
+
+impl Default for AlphaStreamProcessorBuilder {
+    fn default() -> Self {
+        Self {
+            runtime_threads: 8,
+            connection_pool_size: 10,
+            timeout_seconds: 30,
+            cache_capacity: 512,
+            prefetch_window: 10,
+            processing_mode: ProcessingMode::Bitmap,
+        }
+    }
+}
+
+impl AlphaStreamProcessorBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn runtime_threads(mut self, threads: usize) -> Self {
+        self.runtime_threads = threads.clamp(1, 64);
+        self
+    }
+    pub fn connection_pool_size(mut self, size: usize) -> Self {
+        self.connection_pool_size = size.clamp(1, 100);
+        self
+    }
+    pub fn timeout_seconds(mut self, secs: u64) -> Self {
+        self.timeout_seconds = secs.clamp(1, 300);
+        self
+    }
+    pub fn cache_capacity(mut self, cap: usize) -> Self {
+        self.cache_capacity = cap.clamp(1, 4096);
+        self
+    }
+    pub fn prefetch_window(mut self, win: usize) -> Self {
+        self.prefetch_window = win.clamp(1, 100);
+        self
+    }
+    pub fn processing_mode(mut self, mode: ProcessingMode) -> Self {
+        self.processing_mode = mode;
+        self
+    }
+    /// Build an AlphaStreamProcessor with the configured options (ASVP only for now)
+    pub fn build_asvp(self, file_path: &str, width: u32, height: u32) -> Result<AlphaStreamProcessor, FormatError> {
+        use crate::formats::ASVPFormat;
+        use crate::cache::FrameCache;
+        use crate::scheduler::Scheduler;
+        use crate::runtime::Runtime;
+        use std::fs::File;
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let file = File::open(file_path)?;
+        let format = Arc::new(Mutex::new(Box::new(ASVPFormat::new(file)?) as Box<dyn ASFormat + Send + Sync>));
+        let cache = Arc::new(FrameCache::new(self.cache_capacity));
+        let mut scheduler_obj = Scheduler::new();
+        scheduler_obj.set_cache(Arc::clone(&cache));
+        scheduler_obj.set_max_concurrent(self.connection_pool_size);
+        scheduler_obj.set_prefetch_count(self.prefetch_window);
+        let scheduler = Arc::new(Mutex::new(scheduler_obj));
+        let runtime = Runtime::with_worker_threads(self.runtime_threads).expect("Failed to create runtime");
+
+        let mut processor = AlphaStreamProcessor {
+            cache: Arc::clone(&cache),
+            scheduler,
+            format,
+            width,
+            height,
+            mode: self.processing_mode,
+            runtime: Some(runtime),
+            background_handle: None,
+        };
+        processor.start_background_processing();
+        Ok(processor)
+    }
+}
+//
+// This module provides the high-level API for AlphaStream processing,
+// integrating the format parsers, cache, scheduler, and rasterizer.
+//
+// For novices: This is like a "manager" that coordinates different parts of the system.
+// It handles opening files, processing frames asynchronously (meaning tasks can run in the background
+// without blocking the main program), and provides methods to get processed frames.
 
 use std::fs::File;
 use std::sync::Arc;
@@ -20,7 +116,7 @@ use crate::scheduler::{Scheduler, Task};
 /// Processing mode for rasterization
 /// This enum tells the system what kind of output to generate from the raw polystream data.
 /// Bitmap creates a grayscale mask image, TriangleStrip creates 3D geometry data, Both does both.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessingMode {
     /// Generate only bitmap (R8 mask) output
     Bitmap,
@@ -341,8 +437,53 @@ impl Drop for AlphaStreamProcessor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::testlib::create_test_asvp;
+    use crate::api::AlphaStreamProcessorBuilder;
+    use crate::AlphaStreamProcessor;
+    use crate::ProcessingMode;
+
+    #[test]
+    fn test_builder_defaults_and_overrides() {
+        let builder = AlphaStreamProcessorBuilder::new();
+        assert_eq!(builder.runtime_threads, 8);
+        assert_eq!(builder.connection_pool_size, 10);
+        assert_eq!(builder.timeout_seconds, 30);
+        assert_eq!(builder.cache_capacity, 512);
+        assert_eq!(builder.prefetch_window, 10);
+        assert_eq!(builder.processing_mode, ProcessingMode::Bitmap);
+
+        let builder = builder
+            .runtime_threads(32)
+            .connection_pool_size(50)
+            .timeout_seconds(120)
+            .cache_capacity(1024)
+            .prefetch_window(25)
+            .processing_mode(ProcessingMode::Both);
+        assert_eq!(builder.runtime_threads, 32);
+        assert_eq!(builder.connection_pool_size, 50);
+        assert_eq!(builder.timeout_seconds, 120);
+        assert_eq!(builder.cache_capacity, 1024);
+        assert_eq!(builder.prefetch_window, 25);
+        assert_eq!(builder.processing_mode, ProcessingMode::Both);
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_asvp_and_processing() {
+        let test_file = create_test_asvp();
+        let builder = AlphaStreamProcessorBuilder::new()
+            .runtime_threads(4)
+            .cache_capacity(16)
+            .prefetch_window(2)
+            .processing_mode(ProcessingMode::Both);
+        let processor = builder.build_asvp(test_file.path().to_str().unwrap(), 16, 16).unwrap();
+        let metadata = processor.metadata().await.unwrap();
+        assert_eq!(metadata.frame_count, 1);
+        let _ = processor.get_frame(0, 16, 16).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        let frame = processor.get_frame(0, 16, 16).await;
+        assert!(frame.is_some());
+    }
+// Remove duplicate imports
 
     #[tokio::test]
     async fn test_asvp_processor() {

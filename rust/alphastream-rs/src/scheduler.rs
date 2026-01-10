@@ -79,6 +79,16 @@ impl Scheduler {
         }
     }
 
+    /// Set the maximum number of concurrent tasks (for builder integration)
+    pub fn set_max_concurrent(&mut self, max: usize) {
+        self.max_concurrent = max;
+    }
+
+    /// Set the prefetch window size (for builder integration)
+    pub fn set_prefetch_count(&mut self, count: usize) {
+        self.prefetch_count = count;
+    }
+
     /// Set the cache reference for coordinated rate control and prefetching
     pub fn set_cache(&mut self, cache: Arc<FrameCache>) {
         self.cache = Some(cache);
