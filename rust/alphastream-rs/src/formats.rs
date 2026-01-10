@@ -4,7 +4,7 @@
 //! AlphaStream vector resource files. It provides methods to access metadata, frame counts,
 //! and decode individual frames into polystream data for rasterization.
 
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Seek};
 use flate2::read::ZlibDecoder;
 use chacha20::ChaCha20Legacy as ChaCha20;
 use chacha20::cipher::{NewCipher, StreamCipher};

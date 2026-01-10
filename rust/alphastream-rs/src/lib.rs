@@ -195,12 +195,12 @@ pub extern "C" fn CV_init(
     width: c_uint,
     height: c_uint,
     version: *const c_char,
-    start_frame: c_uint,
-    l0_buffer_length: c_uint,
+    _start_frame: c_uint,
+    _l0_buffer_length: c_uint,
     l1_buffer_length: c_uint,
     l1_buffer_init_length: c_uint,
     init_timeout_ms: c_uint,
-    data_timeout_ms: c_uint,
+    _data_timeout_ms: c_uint,
 ) -> bool {
     if handle.is_null() {
         return false;
