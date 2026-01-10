@@ -27,5 +27,13 @@
 25. [25-prefetching.md](docs/tasks/25-prefetching.md)
 26. [26-thread-safety-cache.md](docs/tasks/26-thread-safety-cache.md)
 27. [27-cache-scheduler-integration.md](docs/tasks/27-cache-scheduler-integration.md)
+28. [28-handle-processor-consolidation.md](docs/tasks/28-handle-processor-consolidation.md)
+29. [29-c-abi-refactor.md](docs/tasks/29-c-abi-refactor.md)
+30. [30-lru-eviction-policy.md](docs/tasks/30-lru-eviction-policy.md)
+31. [31-forward-prefetching.md](docs/tasks/31-forward-prefetching.md)
+32. [32-thread-safe-cache.md](docs/tasks/32-thread-safe-cache.md)
+33. [33-cache-scheduler-integration.md](docs/tasks/33-cache-scheduler-integration.md)
+34. [34-lru-prefetch-threadsafe-tests.md](docs/tasks/34-lru-prefetch-threadsafe-tests.md)
+35. [35-architecture-api-docs-update.md](docs/tasks/35-architecture-api-docs-update.md)
 
 Note: Legacy filenames remain in the repository; this index defines the canonical execution order.

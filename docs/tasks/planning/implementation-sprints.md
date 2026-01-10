@@ -100,49 +100,67 @@ Polystream rasterization and resize demo
 ### Demo Milestone
 Parsing, decryption, integration demo
 
-## Sprint 6: Parsing & Integration
+## Sprint 6: Advanced Caching & Integration
 
 ### Objectives
-- Refactor caching strategy to the Forward anticipation strategy, implementing prefetching of future frames based on sequential access patterns to improve performance
-- Maintain LRU eviction policy with a capacity of 512 frames for memory efficiency
-- Ensure thread-safe operations using Arc<RwLock<>> for concurrent access
-- Integrate caching with the scheduler for rate control and optimized data flow
+- Consolidate handle and processor abstractions for a unified API and FFI boundary
+- Define and refactor C ABI to wrap `AlphaStreamProcessor` directly
+- Implement and enforce LRU eviction policy (512 frames)
+- Implement forward anticipation prefetching logic
+- Ensure thread-safe cache operations
+- Integrate cache and scheduler for coordinated rate control and prefetching
+- Expand unit/integration tests for LRU, prefetching, thread safety, and scheduler integration
+- Update documentation for new architecture and API
+- Ensure CI pipeline and code review for all deliverables
 
 ### Tasks
-- [ ] [Task 24](docs/tasks/24-lru-cache.md)
-- [ ] [Task 25](docs/tasks/25-prefetching.md)
-- [ ] [Task 26](docs/tasks/26-thread-safety-cache.md)
-- [ ] [Task 27](docs/tasks/27-cache-scheduler-integration.md)
+- [ ] [Task 28](docs/tasks/28-handle-processor-consolidation.md): Consolidate handle and processor abstractions for unified API/FFI boundary
+- [ ] [Task 29](docs/tasks/29-c-abi-refactor.md): Define and refactor C ABI to wrap `AlphaStreamProcessor` directly
+- [ ] [Task 24](docs/tasks/24-lru-cache.md): Implement and enforce LRU eviction policy (512 frames)
+- [ ] [Task 25](docs/tasks/25-prefetching.md): Implement forward anticipation prefetching logic
+- [ ] [Task 26/32](docs/tasks/26-thread-safety-cache.md): Ensure thread-safe cache operations (consolidated)
+- [ ] [Task 27/33](docs/tasks/27-cache-scheduler-integration.md): Integrate cache and scheduler for coordinated rate control and prefetching (consolidated)
+- [ ] [Task 34](docs/tasks/34-lru-prefetch-threadsafe-tests.md): Expand unit/integration tests for LRU, prefetching, thread safety, and scheduler integration
+- [ ] [Task 35](docs/tasks/35-architecture-api-docs-update.md): Update documentation for new architecture and API
+- [ ] Documentation deliverables: Update ADR and PRD for all new architecture and API changes
+- [ ] CI/code review: Ensure all new features are covered by CI and pass code review
 
 ### Acceptance Criteria
-- Forward anticipation caching strategy implemented with prefetching of future frames
-- LRU eviction policy maintains memory efficiency with 512 frame capacity
-- Cache operations are thread-safe using Arc<RwLock<>>
-- Caching integrated with scheduler for rate control and optimized data flow
-- Caching performance validated through benchmarks and tests
+- Handle/processor consolidation and C ABI refactor completed
+- LRU eviction policy (512 frames) enforced
+- Forward anticipation prefetching logic implemented
+- Cache operations are thread-safe and race-free
+- Cache and scheduler are integrated for rate control and prefetching
+- Comprehensive unit/integration tests for all new behaviors
+- Documentation (ADR, PRD) updated for new architecture and API
+- All deliverables pass CI and code review
 
 ### Demo Milestone
-Forward anticipation caching demo, including proper testing of APIs, C ABI, and integration
+Unified API/FFI, advanced caching, scheduler integration, documentation, and CI/code review demo
 
 ## Sprint 7: APIs & Bindings
 
 ### Objectives
-- Create public API facade
-- Implement C ABI for P/Invoke
-- Define error model
+- Define public API facade
+- Define and implement C ABI for P/Invoke
+- Refactor error model
 - Add benchmarks
 - Implement integration tests
 - Add builder configuration
 - Handle metadata and timebase
+- Update documentation for API and bindings
+- Ensure CI pipeline and code review for all deliverables
 
 ### Tasks
-- [ ] [Task 12](docs/tasks/12-public-api-facade.md)
-- [ ] [Task 13](docs/tasks/13-c-abi-pinvoke.md)
-- [ ] [Task 14](docs/tasks/14-error-model.md)
-- [ ] [Task 15](docs/tasks/15-benchmarks.md)
-- [ ] [Task 16](docs/tasks/16-integration-tests.md)
-- [ ] [Task 17](docs/tasks/17-builder-config.md)
-- [ ] [Task 18](docs/tasks/18-metadata-timebase.md)
+- [ ] [Task 12](docs/tasks/12-public-api-facade.md): Define and implement public API facade
+- [ ] [Task 13](docs/tasks/13-c-abi-pinvoke.md): Define and implement C ABI for P/Invoke
+- [ ] [Task 14](docs/tasks/14-error-model.md): Refactor error model
+- [ ] [Task 15](docs/tasks/15-benchmarks.md): Add benchmarks
+- [ ] [Task 16](docs/tasks/16-integration-tests.md): Implement integration tests
+- [ ] [Task 17](docs/tasks/17-builder-config.md): Add builder configuration
+- [ ] [Task 18](docs/tasks/18-metadata-timebase.md): Handle metadata and timebase
+- [ ] Documentation deliverables: Update API and bindings documentation
+- [ ] CI/code review: Ensure all new features are covered by CI and pass code review
 
 ### Acceptance Criteria
 - Public API provides complete functionality
@@ -152,6 +170,8 @@ Forward anticipation caching demo, including proper testing of APIs, C ABI, and 
 - Tests pass integration scenarios
 - Configuration is flexible
 - Metadata and timebase are processed correctly
+- Documentation is up to date for API and bindings
+- All deliverables pass CI and code review
 
 ### Demo Milestone
-Full facade, C ABI, benchmarks, tests demo
+Full facade, C ABI, benchmarks, tests, documentation, and CI/code review demo
