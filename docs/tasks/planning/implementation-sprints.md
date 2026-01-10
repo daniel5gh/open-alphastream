@@ -116,7 +116,7 @@ Parsing, decryption, integration demo
 ### Tasks
 - [x] [Task 28](docs/tasks/28-handle-processor-consolidation.md): Consolidate handle and processor abstractions for unified API/FFI boundary _(Completed: Unified the handle and processor abstractions, simplifying the API and FFI boundary for easier maintenance and extension.)_
 - [x] [Task 29](docs/tasks/29-c-abi-refactor.md): Define and refactor C ABI to wrap `AlphaStreamProcessor` directly _(Completed: Refactored the C ABI to directly wrap `AlphaStreamProcessor`, improving FFI clarity and reducing indirection.)_
-- [ ] [Task 24](docs/tasks/24-lru-cache.md): Implement and enforce LRU eviction policy (512 frames)
+- [x] [Task 24](docs/tasks/24-lru-cache.md): Implement and enforce LRU eviction policy (512 frames) _(Completed: Thread-safe, fixed-capacity LRU cache implemented, integrated, and fully tested. All cache operations are race-free and meet performance requirements.)_
 - [ ] [Task 25](docs/tasks/25-prefetching.md): Implement forward anticipation prefetching logic
 - [ ] [Task 26/32](docs/tasks/26-thread-safety-cache.md): Ensure thread-safe cache operations (consolidated)
 - [ ] [Task 27/33](docs/tasks/27-cache-scheduler-integration.md): Integrate cache and scheduler for coordinated rate control and prefetching (consolidated)

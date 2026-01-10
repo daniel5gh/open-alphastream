@@ -1,9 +1,9 @@
 // Cache module
-// This module implements an LRU (Least Recently Used) cache for frames with concurrency support.
-// LRU means: when the cache is full, the least recently accessed item is removed to make space.
-// Thread-safe means multiple threads can access it simultaneously without data corruption.
-// For novices: Think of it as a smart storage box that keeps frequently used frames in memory,
-// automatically removing old ones when full, and safe for multiple workers to use at once.
+// Implements a thread-safe LRU (Least Recently Used) cache for decoded frames.
+// - Fixed capacity (default 512): When full, least-recently-used frames are evicted.
+// - Thread-safe: Multiple threads can access safely via Arc<RwLock<...>>.
+// - Used by the main processor and scheduler for frame reuse and deduplication.
+// For novices: Like a smart box that keeps the most recently used frames, automatically removing old ones when full, and safe for many workers at once.
 
 // Re-export FrameData from formats module
 pub use crate::formats::FrameData;
@@ -16,28 +16,37 @@ use std::sync::{Arc, RwLock};
 /// Arc allows sharing between threads, RwLock allows multiple readers or one writer.
 /// For novices: This is like a shared storage locker where multiple workers can read simultaneously,
 /// but only one can write at a time, and old items are automatically removed when full.
+/// Thread-safe, fixed-capacity LRU cache for decoded frames.
 pub struct FrameCache {
-    // The underlying LRU cache, protected by a read-write lock for thread safety.
-    // Arc = Atomic Reference Count (safe sharing), RwLock = Read-Write Lock (concurrent access)
+    /// The underlying LRU cache, protected by a read-write lock for thread safety.
+    /// Arc = Atomic Reference Count (safe sharing), RwLock = Read-Write Lock (concurrent access)
     cache: Arc<RwLock<LruCache<usize, FrameData>>>,
 }
 
 impl FrameCache {
     /// Create a new FrameCache with the specified capacity.
-    /// Defaults to 512 frames as per requirements.
+    /// # Arguments
+    /// * `capacity` - Maximum number of frames to store. When full, LRU eviction occurs.
+    /// # Panics
+    /// Panics if capacity is zero.
     pub fn new(capacity: usize) -> Self {
+        assert!(capacity > 0, "FrameCache capacity must be > 0");
         Self {
             cache: Arc::new(RwLock::new(LruCache::new(NonZeroUsize::new(capacity).unwrap()))),
         }
     }
 
     /// Create a new FrameCache with default capacity of 512.
+    /// This is the recommended default for most use cases.
     pub fn default() -> Self {
         Self::new(512)
     }
 
     /// Insert a frame into the cache.
     /// If the cache is full, the least recently used frame is evicted.
+    /// # Arguments
+    /// * `frame_index` - The frame number as cache key.
+    /// * `frame_data` - The decoded frame data to store.
     pub fn insert(&self, frame_index: usize, frame_data: FrameData) {
         let mut cache = self.cache.write().unwrap();
         cache.put(frame_index, frame_data);
@@ -45,20 +54,25 @@ impl FrameCache {
 
     /// Get a frame from the cache.
     /// Returns Some(frame_data) if found, None if not in cache.
-    /// Important: Accessing a frame marks it as "recently used", affecting which frames get evicted.
-    /// For novices: Like checking a library book out - it becomes "recently used" and less likely to be removed.
+    /// Accessing a frame marks it as "recently used" (affects eviction order).
+    /// # Arguments
+    /// * `frame_index` - The frame number to look up.
     pub fn get(&self, frame_index: usize) -> Option<FrameData> {
         let mut cache = self.cache.write().unwrap(); // Write lock needed because get() updates LRU order
         cache.get(&frame_index).map(|fd| fd.clone()) // Clone because we return owned data
     }
 
     /// Check if a frame is in the cache without marking it as recently used.
+    /// # Arguments
+    /// * `frame_index` - The frame number to check.
     pub fn contains(&self, frame_index: &usize) -> bool {
         let cache = self.cache.read().unwrap();
         cache.contains(frame_index)
     }
 
     /// Remove a frame from the cache.
+    /// # Arguments
+    /// * `frame_index` - The frame number to remove.
     pub fn remove(&self, frame_index: &usize) -> Option<FrameData> {
         let mut cache = self.cache.write().unwrap();
         cache.pop(frame_index)
@@ -89,7 +103,7 @@ impl FrameCache {
 }
 
 impl Clone for FrameCache {
-    /// Clone the FrameCache, sharing the same underlying cache.
+    /// Clone the FrameCache, sharing the same underlying cache (Arc).
     fn clone(&self) -> Self {
         Self {
             cache: Arc::clone(&self.cache),
