@@ -96,7 +96,9 @@ fn test_c_abi_integration() {
     assert!(!handle.is_null());
 
     // Initialize
-    let base_url = CString::new("https://example.com").unwrap();
+    // Use a real test file for processor-backed FFI
+    let test_file = create_test_asvp();
+    let base_url = CString::new(test_file.path().to_str().unwrap()).unwrap();
     let version = CString::new("1.0.0").unwrap();
 
     let success = CV_init(
@@ -115,8 +117,14 @@ fn test_c_abi_integration() {
     );
     assert!(success);
 
-    // Get frame
-    let frame_ptr = CV_get_frame(handle, 0);
+    // Get frame (wait for processing)
+    let mut frame_ptr = CV_get_frame(handle, 0);
+    let mut tries = 0;
+    while frame_ptr.is_null() && tries < 20 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        frame_ptr = CV_get_frame(handle, 0);
+        tries += 1;
+    }
     assert!(!frame_ptr.is_null());
 
     // Verify frame data
