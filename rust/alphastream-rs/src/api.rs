@@ -152,6 +152,10 @@ impl AlphaStreamProcessor {
         let mut scheduler = self.scheduler.lock().await; // Lock scheduler (async mutex)
         let task = Task::with_priority(requested_frame_index, 10); // High priority for user-requested frames
         scheduler.schedule_task(task);
+
+        // Prefetch if sequential access detected
+        AlphaStreamProcessor::maybe_trigger_prefetch(&mut scheduler, requested_frame_index).await;
+
         None // Will be available after background processing completes
     }
 
@@ -168,6 +172,10 @@ impl AlphaStreamProcessor {
         let mut scheduler = self.scheduler.lock().await;
         let task = Task::with_priority(frame_index, 10);
         scheduler.schedule_task(task);
+
+        // Prefetch if sequential access detected
+        AlphaStreamProcessor::maybe_trigger_prefetch(&mut scheduler, frame_index).await;
+
         None
     }
 
@@ -189,6 +197,24 @@ impl AlphaStreamProcessor {
         let task = Task::new(frame_index as usize);
         scheduler.schedule_task(task);
         Ok(())
+    }
+
+    /// Detect sequential access and trigger prefetching if needed
+    async fn maybe_trigger_prefetch(scheduler: &mut Scheduler, current_frame: usize) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::OnceLock;
+
+        // Static to track last accessed frame (per-process, not per-instance)
+        static LAST_FRAME: OnceLock<AtomicUsize> = OnceLock::new();
+        let last = LAST_FRAME.get_or_init(|| AtomicUsize::new(usize::MAX));
+        let last_frame = last.load(Ordering::Relaxed);
+
+        // Detect strictly sequential forward access
+        if last_frame != usize::MAX && current_frame == last_frame + 1 {
+            // Sequential access detected, trigger prefetch
+            scheduler.prefetch(current_frame);
+        }
+        last.store(current_frame, Ordering::Relaxed);
     }
 
     /// Start background processing of scheduler tasks

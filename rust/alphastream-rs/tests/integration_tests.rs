@@ -84,6 +84,12 @@ fn test_full_processor_lifecycle() {
 
         let vertices = processor.get_triangle_strip_vertices(0).await.unwrap();
         assert_eq!(vertices.len(), 0); // Empty for this test data
+
+        // Prefetch test: sequential access triggers prefetch
+        processor.get_frame(1, 16, 16).await;
+        processor.get_frame(2, 16, 16).await;
+        // Prefetch should have been triggered for frame 2
+        // (no assertion here, but coverage for sequential prefetch logic)
     });
 }
 
