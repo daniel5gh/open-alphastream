@@ -2,7 +2,32 @@
 //!
 //! This module provides a C-compatible interface that can be called from other languages like C# via P/Invoke.
 //! All functions are marked with #[no_mangle] and extern "C" to prevent name mangling and ensure C calling convention.
-//! For novices: This allows .NET programs to use this Rust library without rewriting everything in C#.
+//!
+//! # FFI Buffer Ownership Rules
+//!
+//! - All pointers returned by FFI functions (e.g., frame buffers, vertex arrays) are owned by the library and must not be freed by the caller.
+//! - Each call to `CV_get_frame` or `CV_get_triangle_strip_vertices` invalidates the previous buffer pointer for that handle.
+//! - The buffer remains valid until the next call to the same function or until `CV_destroy` is called.
+//! - Do not retain or free returned pointers after the handle is destroyed.
+//!
+//! # Safety, Concurrency, and FFI Usage
+//!
+//! - Each `AlphaStreamCHandle` is not thread-safe; do not share a handle between threads.
+//! - All FFI functions must be called from the same thread that created the handle.
+//! - The library is internally thread-safe for independent handles, but not for concurrent use of a single handle.
+//!
+//! - All FFI functions set an error code and message on the handle if an error occurs.
+//! - Use `CV_get_last_error_code` and `CV_get_last_error_text` to retrieve error details after any call.
+//!
+//! - Always call `CV_create` to obtain a handle, and `CV_destroy` to free it.
+//! - Do not access the internals of the handle struct from C code; treat it as opaque.
+//!
+//! - All pointers returned by FFI functions (e.g., frame buffers, vertex arrays) are owned by the library and must not be freed by the caller.
+//! - Each call to `CV_get_frame` or `CV_get_triangle_strip_vertices` invalidates the previous buffer pointer for that handle.
+//! - The buffer remains valid until the next call to the same function or until `CV_destroy` is called.
+//! - Do not retain or free returned pointers after the handle is destroyed.
+//!
+//! For C ABI consumers: always check error codes after each call, and never free or retain returned pointers beyond the handle's lifetime.
 
 use std::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void, CStr, CString};
 use std::ptr;
@@ -27,7 +52,8 @@ pub struct AlphaStreamCHandle {
     pub last_frame_ptr: *mut u8,
     pub last_vertices_ptr: *mut f32,
     pub last_vertices_len: usize,
-    // Future: error state, diagnostics, etc.
+    pub last_error_code: i32,
+    pub last_error_text: [u8; 256],
 }
 
 impl AlphaStreamCHandle {
@@ -37,7 +63,20 @@ impl AlphaStreamCHandle {
             last_frame_ptr: std::ptr::null_mut(),
             last_vertices_ptr: std::ptr::null_mut(),
             last_vertices_len: 0,
+            last_error_code: 0,
+            last_error_text: [0; 256],
         }
+    }
+    pub fn set_error(&mut self, code: i32, msg: &str) {
+        self.last_error_code = code;
+        let bytes = msg.as_bytes();
+        let len = bytes.len().min(255);
+        self.last_error_text[..len].copy_from_slice(&bytes[..len]);
+        self.last_error_text[len] = 0;
+    }
+    pub fn clear_error(&mut self) {
+        self.last_error_code = 0;
+        self.last_error_text[0] = 0;
     }
 }
 
@@ -86,13 +125,22 @@ pub extern "C" fn CV_get_version(_handle: *mut AlphaStreamCHandle) -> *const c_c
 #[no_mangle]
 pub extern "C" fn CV_get_last_error_code(handle: *mut AlphaStreamCHandle) -> c_int {
     if handle.is_null() { return -1; }
-    0
+    unsafe { (*handle).last_error_code }
 }
 
 #[no_mangle]
-pub extern "C" fn CV_get_last_error_text(_handle: *mut AlphaStreamCHandle) -> *const c_char {
-    // TODO: Implement error text retrieval from AlphaStreamProcessor
-    static_cstr("OK")
+pub extern "C" fn CV_get_last_error_text(handle: *mut AlphaStreamCHandle) -> *const c_char {
+    if handle.is_null() {
+        return static_cstr("Invalid handle");
+    }
+    unsafe {
+        let err = &(*handle).last_error_text;
+        if err[0] == 0 {
+            static_cstr("OK")
+        } else {
+            err.as_ptr() as *const c_char
+        }
+    }
 }
 
 #[no_mangle]
@@ -157,18 +205,22 @@ pub extern "C" fn CV_init(
     if handle.is_null() {
         return false;
     }
-    // Construct a processor from ASVP file for test/demo
     unsafe {
         let chandle = &mut *handle;
-        // For test/demo, use the base_url as a file path
+        chandle.clear_error();
         if let Ok(path) = CStr::from_ptr(base_url).to_str() {
             match api::AlphaStreamProcessor::new_asvp(path, width, height, ProcessingMode::Both) {
                 Ok(proc) => {
                     chandle.processor = Some(Box::new(proc));
                     return true;
                 }
-                Err(_) => return false,
+                Err(e) => {
+                    chandle.set_error(2, &format!("Init error: {e}"));
+                    return false;
+                }
             }
+        } else {
+            chandle.set_error(1, "Invalid base_url");
         }
     }
     false
@@ -186,12 +238,11 @@ pub extern "C" fn CV_get_frame(handle: *mut AlphaStreamCHandle, frame_index: c_u
     if handle.is_null() { return ptr::null(); }
     unsafe {
         let chandle = &mut *handle;
+        chandle.clear_error();
         if let Some(proc) = &chandle.processor {
-            // Use processor.get_frame to retrieve bitmap
             let rt = tokio::runtime::Runtime::new().unwrap();
             return match rt.block_on(async { proc.get_frame(frame_index as usize, proc.width(), proc.height()).await }) {
                 Some(bitmap) => {
-                    // Free previous buffer
                     if !chandle.last_frame_ptr.is_null() {
                         let _ = Box::from_raw(chandle.last_frame_ptr);
                         chandle.last_frame_ptr = std::ptr::null_mut();
@@ -201,9 +252,13 @@ pub extern "C" fn CV_get_frame(handle: *mut AlphaStreamCHandle, frame_index: c_u
                     chandle.last_frame_ptr = ptr;
                     ptr as *const c_void
                 }
-                None => ptr::null(),
+                None => {
+                    chandle.set_error(3, "Frame not found or not ready");
+                    ptr::null()
+                },
             }
         }
+        chandle.set_error(4, "Processor not initialized");
         ptr::null()
     }
 }
@@ -223,12 +278,11 @@ pub extern "C" fn CV_get_triangle_strip_vertices(handle: *mut AlphaStreamCHandle
     }
     unsafe {
         let chandle = &mut *handle;
+        chandle.clear_error();
         if let Some(proc) = &chandle.processor {
-            // Use processor.get_frame to retrieve bitmap
             let rt = tokio::runtime::Runtime::new().unwrap();
             return match rt.block_on(async { proc.get_triangle_strip_vertices(frame_index as usize).await }) {
                 Some(vertices) => {
-                    // Free previous buffer
                     if !chandle.last_vertices_ptr.is_null() {
                         let _ = Vec::from_raw_parts(chandle.last_vertices_ptr, chandle.last_vertices_len, chandle.last_vertices_len);
                         chandle.last_vertices_ptr = std::ptr::null_mut();
@@ -246,10 +300,12 @@ pub extern "C" fn CV_get_triangle_strip_vertices(handle: *mut AlphaStreamCHandle
                 None => {
                     *out_vertices = ptr::null();
                     *out_count = 0;
+                    chandle.set_error(5, "Vertices not found or not ready");
                     false
                 }
             }
         }
+        chandle.set_error(4, "Processor not initialized");
         false
     }
 }
@@ -362,8 +418,8 @@ mod tests {
         // Test out of range
         let null_frame = CV_get_frame(handle, 10001); // beyond total_frames
         assert!(null_frame.is_null());
-        // TODO fix once we have error reporting
-        // assert_eq!(CV_get_last_error_code(handle), 3); // NotFound error
+        // Error code should be set for not found once error reporting is implemented
+        assert_eq!(CV_get_last_error_code(handle), 3); // NotFound error
 
         CV_destroy(handle);
     }
@@ -422,5 +478,57 @@ mod tests {
         let mut count: usize = 0;
         let success = CV_get_triangle_strip_vertices(std::ptr::null_mut(), 0, &mut vertices, &mut count);
         assert!(!success);
+    }
+
+    // Additional FFI error path and edge case tests
+    #[test]
+    fn test_c_abi_get_frame_uninitialized_processor() {
+        let handle = CV_create();
+        // Do not initialize
+        let frame_ptr = CV_get_frame(handle, 0);
+        assert!(frame_ptr.is_null());
+        assert_eq!(CV_get_last_error_code(handle), 4); // Processor not initialized
+        CV_destroy(handle);
+    }
+
+    #[test]
+    fn test_c_abi_triangle_strip_uninitialized_processor() {
+        let handle = CV_create();
+        // Do not initialize
+        let mut vertices: *const f32 = std::ptr::null();
+        let mut count: usize = 0;
+        let success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+        assert!(!success);
+        assert_eq!(CV_get_last_error_code(handle), 4); // Processor not initialized
+        CV_destroy(handle);
+    }
+
+    #[test]
+    fn test_c_abi_triangle_strip_out_of_range() {
+        let handle = CV_create();
+        let test_file = create_test_asvp();
+        let test_path = test_file.path().to_str().unwrap();
+        let base_url = CString::new(test_path).unwrap();
+        let version = CString::new("1.0.0").unwrap();
+        CV_init(
+            handle,
+            base_url.as_ptr(),
+            123,
+            16,
+            16,
+            version.as_ptr(),
+            0,
+            1024,
+            512,
+            256,
+            5000,
+            30000,
+        );
+        let mut vertices: *const f32 = std::ptr::null();
+        let mut count: usize = 0;
+        let success = CV_get_triangle_strip_vertices(handle, 10001, &mut vertices, &mut count);
+        assert!(!success);
+        assert_eq!(CV_get_last_error_code(handle), 5); // Vertices not found or not ready
+        CV_destroy(handle);
     }
 }

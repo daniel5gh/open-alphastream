@@ -324,4 +324,50 @@ mod tests {
         let read_data = LocalTransport::read_range(&reader, 6, 9).await.unwrap();
         assert_eq!(read_data.as_ref(), b"transport");
     }
+
+    // Additional error path and edge case tests for transport
+    #[tokio::test]
+    async fn test_mock_transport_offset_out_of_bounds() {
+        let reader = MockTransport::open("mock://data").await.unwrap();
+        let result = MockTransport::read_range(&reader, 1000, 10).await;
+        assert!(matches!(result, Err(TransportError::Other(_))));
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_transport_offset_out_of_bounds() {
+        use tempfile::NamedTempFile;
+        use std::io::Write;
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let data = b"Short data.";
+        temp_file.write_all(data).unwrap();
+        let path = temp_file.path().to_str().unwrap();
+        let reader = InMemoryTransport::open(path).await.unwrap();
+        let result = InMemoryTransport::read_range(&reader, 100, 10).await;
+        assert!(matches!(result, Err(TransportError::Other(_))));
+    }
+
+    #[tokio::test]
+    async fn test_local_transport_offset_out_of_bounds() {
+        use tempfile::NamedTempFile;
+        use std::io::Write;
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let data = b"Edge case data.";
+        temp_file.write_all(data).unwrap();
+        let path = temp_file.path().to_str().unwrap();
+        let reader = LocalTransport::open(path).await.unwrap();
+        let result = LocalTransport::read_range(&reader, 100, 10).await;
+        assert!(matches!(result, Err(TransportError::Other(_))));
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_transport_file_not_found() {
+        let result = InMemoryTransport::open("/nonexistent/file/path").await;
+        assert!(matches!(result, Err(TransportError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_local_transport_file_not_found() {
+        let result = LocalTransport::open("/nonexistent/file/path").await;
+        assert!(matches!(result, Err(TransportError::NotFound)));
+    }
 }

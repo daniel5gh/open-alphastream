@@ -355,6 +355,7 @@ impl<R: Read + Seek> ASFormat for ASVPFormat<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_derive_key() {
@@ -363,6 +364,19 @@ mod tests {
         let base_url = b"test.asvr";
         let key = derive_key(scene_id, version, base_url).unwrap();
         assert_eq!(key.len(), 32);
+    }
+
+    proptest! {
+        #[test]
+        fn fuzz_decompress_zlib_roundtrip(data in proptest::collection::vec(any::<u8>(), 0..1024)) {
+            use flate2::{Compression, write::ZlibEncoder};
+            use std::io::Write;
+            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(&data).unwrap();
+            let compressed = encoder.finish().unwrap();
+            let decompressed = decompress_zlib(&compressed).unwrap();
+            prop_assert_eq!(decompressed, data);
+        }
     }
 
     #[test]

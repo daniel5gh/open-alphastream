@@ -23,6 +23,7 @@ generic-array = "0.14"
 
 [dev-dependencies]
 criterion = "0.5"
+proptest = "1"
 
 [[bench]]
 name = "cache_benchmark"

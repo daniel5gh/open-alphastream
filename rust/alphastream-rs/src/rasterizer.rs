@@ -177,6 +177,7 @@ pub fn resize_nearest_neighbor(input: &[u8], in_w: u32, in_h: u32, out_w: u32, o
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_rasterize_triangle() {
@@ -193,6 +194,17 @@ mod tests {
         assert_eq!(mask.len(), 256);
         // Check that some pixels are filled
         assert!(mask.iter().any(|&x| x == 255));
+    }
+
+    proptest! {
+        #[test]
+        fn fuzz_rasterize_does_not_panic(data in proptest::collection::vec(any::<u8>(), 0..128), w in 1u32..32, h in 1u32..32) {
+            let _ = PolystreamRasterizer::rasterize(&data, w, h);
+        }
+        #[test]
+        fn fuzz_triangle_strip_does_not_panic(data in proptest::collection::vec(any::<u8>(), 0..128)) {
+            let _ = PolystreamRasterizer::polystream_to_triangle_strip(&data);
+        }
     }
 
     #[test]
