@@ -114,6 +114,34 @@ impl Clone for FrameCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scheduler::Scheduler;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_cache_scheduler_adaptive_integration() {
+        let cache = FrameCache::new(3);
+        let mut scheduler = Scheduler::new();
+        scheduler.set_cache(Arc::new(cache.clone()));
+
+        // Fill cache to capacity
+        for i in 0..3 {
+            cache.insert(i, FrameData {
+                polystream: vec![i as u8],
+                bitmap: None,
+                triangle_strip: None,
+            });
+        }
+        // Scheduler should not dispatch new tasks if cache is full
+        scheduler.prefetch(2);
+        assert!(scheduler.next_task().is_none());
+
+        // Remove one item, now scheduler can dispatch one task
+        cache.remove(&0);
+        scheduler.prefetch(2);
+        let task = scheduler.next_task();
+        assert!(task.is_some());
+        assert_eq!(task.unwrap().frame_index, 3);
+    }
 
     #[test]
     fn test_cache_insert_and_get() {

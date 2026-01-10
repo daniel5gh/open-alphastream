@@ -75,7 +75,9 @@ impl AlphaStreamProcessor {
         let file = File::open(file_path)?; // Open file, return error if fails
         let format = Arc::new(Mutex::new(Box::new(ASVRFormat::new(file, scene_id, version, base_url)?) as Box<dyn ASFormat + Send + Sync>));
         let cache = Arc::new(FrameCache::default());
-        let scheduler = Arc::new(Mutex::new(Scheduler::new()));
+        let mut scheduler_obj = Scheduler::new();
+        scheduler_obj.set_cache(Arc::clone(&cache));
+        let scheduler = Arc::new(Mutex::new(scheduler_obj));
         let runtime = Runtime::new().expect("Failed to create runtime");
 
         let mut processor = Self {
@@ -97,7 +99,9 @@ impl AlphaStreamProcessor {
         let file = File::open(file_path)?;
         let format = Arc::new(Mutex::new(Box::new(ASVPFormat::new(file)?) as Box<dyn ASFormat + Send + Sync>));
         let cache = Arc::new(FrameCache::default());
-        let scheduler = Arc::new(Mutex::new(Scheduler::new()));
+        let mut scheduler_obj = Scheduler::new();
+        scheduler_obj.set_cache(Arc::clone(&cache));
+        let scheduler = Arc::new(Mutex::new(scheduler_obj));
         let runtime = Runtime::new().expect("Failed to create runtime");
 
         let mut processor = Self {

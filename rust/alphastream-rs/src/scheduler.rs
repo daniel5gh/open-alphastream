@@ -4,6 +4,8 @@
 // prevents too many tasks running at once (backpressure), and loads future frames early (prefetching).
 
 use std::collections::VecDeque;
+use std::sync::Arc;
+use crate::cache::FrameCache;
 use tokio::sync::mpsc;
 
 /// Represents a scheduled task with a frame index and priority.
@@ -57,6 +59,8 @@ pub struct Scheduler {
     active_tasks: usize,
     // Number of frames to prefetch ahead of current playback.
     prefetch_count: usize,
+    // Reference to the cache for adaptive prefetching and backpressure
+    cache: Option<Arc<FrameCache>>,
 }
 
 impl Scheduler {
@@ -71,7 +75,13 @@ impl Scheduler {
             max_concurrent: 4, // Default max concurrent tasks
             active_tasks: 0,
             prefetch_count: 10, // Prefetch 10 frames ahead
+            cache: None,
         }
+    }
+
+    /// Set the cache reference for coordinated rate control and prefetching
+    pub fn set_cache(&mut self, cache: Arc<FrameCache>) {
+        self.cache = Some(cache);
     }
 
     /// Calculate the time in seconds for a given frame index using the timebase.
@@ -98,19 +108,19 @@ impl Scheduler {
         }
     }
 
-    /// Get the next task to process, respecting backpressure.
+    /// Get the next task to process, respecting backpressure and cache fullness.
     pub fn next_task(&mut self) -> Option<Task> {
         if self.active_tasks >= self.max_concurrent {
             return None; // Backpressure: don't start more tasks
         }
+        if let Some(ref cache) = self.cache {
+            if cache.len() >= cache.capacity() {
+                // Cache is full, pause processing
+                return None;
+            }
+        }
         self.task_queue.pop_front().map(|task| {
             self.active_tasks += 1;
-            // reconsider prefetching, and who is responsible for it and will moderate it?
-            // Prefetch next frames if cache has space and the queue is smaller than cache size
-            // if self.task_queue.len() < self.cache.capacity() {
-            //     println!("Prefetching frame {}, cache size {}, queue {}", task.frame_index, self.cache.len(), self.task_queue.len());
-            //     self.prefetch(task.frame_index);
-            // }
             task
         })
     }
@@ -124,7 +134,17 @@ impl Scheduler {
 
     /// Generate prefetch tasks for frames ahead of the current frame.
     pub fn prefetch(&mut self, current_frame: usize) {
-        for i in 1..=self.prefetch_count {
+        let mut available_slots = self.prefetch_count;
+        if let Some(ref cache) = self.cache {
+            let cap = cache.capacity();
+            let len = cache.len();
+            if cap > len {
+                available_slots = available_slots.min(cap - len);
+            } else {
+                available_slots = 0;
+            }
+        }
+        for i in 1..=available_slots {
             let frame_index = current_frame + i;
             if !self.task_queue.iter().any(|t| t.frame_index == frame_index) {
                 let task = Task::new(frame_index);
@@ -146,6 +166,35 @@ impl Scheduler {
 
 #[cfg(test)]
 mod tests {
+    use crate::cache::FrameCache;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_scheduler_cache_backpressure_prefetch() {
+        let cache = FrameCache::new(2);
+        let mut scheduler = Scheduler::new();
+        scheduler.set_cache(Arc::new(cache.clone()));
+
+        // Fill cache
+        for i in 0..2 {
+            cache.insert(i, crate::formats::FrameData {
+                polystream: vec![i as u8],
+                bitmap: None,
+                triangle_strip: None,
+            });
+        }
+        // Prefetch should not schedule if cache is full
+        scheduler.prefetch(1);
+        assert!(scheduler.next_task().is_none());
+
+        // Remove one, now prefetch can schedule
+        cache.remove(&0);
+        scheduler.prefetch(1);
+        let task = scheduler.next_task();
+        assert!(task.is_some());
+        assert_eq!(task.unwrap().frame_index, 2);
+    }
+
     use super::*;
 
     #[test]

@@ -153,6 +153,7 @@ fn test_c_abi_integration() {
 fn test_cache_scheduler_integration() {
     let cache = FrameCache::new(10);
     let mut scheduler = Scheduler::new();
+    scheduler.set_cache(std::sync::Arc::new(cache.clone()));
 
     // Schedule some tasks
     for i in 0..5 {
@@ -177,6 +178,20 @@ fn test_cache_scheduler_integration() {
         let data = cache.get(i).unwrap();
         assert_eq!(data.polystream[0], i as u8);
     }
+
+    // Test adaptive prefetching/backpressure: fill cache, then prefetch should not schedule more
+    let mut scheduler2 = Scheduler::new();
+    let cache2 = FrameCache::new(3);
+    scheduler2.set_cache(std::sync::Arc::new(cache2.clone()));
+    for i in 0..3 {
+        cache2.insert(i, formats::FrameData {
+            polystream: vec![i as u8],
+            bitmap: Some(vec![255; 100]),
+            triangle_strip: Some(vec![0.0; 10]),
+        });
+    }
+    scheduler2.prefetch(2); // cache is full, should not schedule
+    assert!(scheduler2.next_task().is_none());
 }
 
 #[test]
