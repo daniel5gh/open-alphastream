@@ -1,6 +1,9 @@
 // Cache module
 // This module implements an LRU (Least Recently Used) cache for frames with concurrency support.
-// It uses a thread-safe LRU cache to store up to 512 frames, evicting the least recently used when full.
+// LRU means: when the cache is full, the least recently accessed item is removed to make space.
+// Thread-safe means multiple threads can access it simultaneously without data corruption.
+// For novices: Think of it as a smart storage box that keeps frequently used frames in memory,
+// automatically removing old ones when full, and safe for multiple workers to use at once.
 
 // Re-export FrameData from formats module
 pub use crate::formats::FrameData;
@@ -10,9 +13,12 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, RwLock};
 
 /// Thread-safe LRU cache for frame data.
-/// Uses Arc<RwLock<>> to allow concurrent access from multiple threads.
+/// Arc allows sharing between threads, RwLock allows multiple readers or one writer.
+/// For novices: This is like a shared storage locker where multiple workers can read simultaneously,
+/// but only one can write at a time, and old items are automatically removed when full.
 pub struct FrameCache {
     // The underlying LRU cache, protected by a read-write lock for thread safety.
+    // Arc = Atomic Reference Count (safe sharing), RwLock = Read-Write Lock (concurrent access)
     cache: Arc<RwLock<LruCache<usize, FrameData>>>,
 }
 
@@ -39,10 +45,11 @@ impl FrameCache {
 
     /// Get a frame from the cache.
     /// Returns Some(frame_data) if found, None if not in cache.
-    /// Accessing a frame marks it as recently used.
+    /// Important: Accessing a frame marks it as "recently used", affecting which frames get evicted.
+    /// For novices: Like checking a library book out - it becomes "recently used" and less likely to be removed.
     pub fn get(&self, frame_index: usize) -> Option<FrameData> {
-        let mut cache = self.cache.write().unwrap();
-        cache.get(&frame_index).map(|fd| fd.clone())
+        let mut cache = self.cache.write().unwrap(); // Write lock needed because get() updates LRU order
+        cache.get(&frame_index).map(|fd| fd.clone()) // Clone because we return owned data
     }
 
     /// Check if a frame is in the cache without marking it as recently used.
@@ -174,5 +181,69 @@ mod tests {
         let data2 = FrameData { polystream: vec![2], bitmap: None, triangle_strip: None };
         cache2.insert(2, data2);
         assert!(cache.contains(&2)); // Shared state
+    }
+
+    #[test]
+    fn test_error_scenarios() {
+        let cache = FrameCache::new(2); // Small cache
+
+        // Test inserting None/empty data
+        let empty_data = FrameData { polystream: vec![], bitmap: None, triangle_strip: None };
+        cache.insert(0, empty_data);
+        assert!(cache.contains(&0));
+
+        // Test removing non-existent
+        assert!(cache.remove(&999).is_none());
+
+        // Test capacity limits
+        let data1 = FrameData { polystream: vec![1], bitmap: None, triangle_strip: None };
+        let data2 = FrameData { polystream: vec![2], bitmap: None, triangle_strip: None };
+        let data3 = FrameData { polystream: vec![3], bitmap: None, triangle_strip: None };
+        cache.insert(1, data1);
+        cache.insert(2, data2);
+        cache.insert(3, data3); // Should evict 0 (least recently used)
+
+        assert!(!cache.contains(&0));
+        // LRU eviction: after inserting 3 items into a cache of size 2, only the two most recently used remain
+        // The actual eviction order depends on access pattern; here, keys 2 and 3 should remain
+        assert!(!cache.contains(&1));
+        assert!(cache.contains(&2));
+        assert!(cache.contains(&3));
+        assert!(cache.contains(&2));
+        assert!(cache.contains(&3));
+    }
+
+    #[test]
+    fn test_thread_safety() {
+        use std::thread;
+        use std::sync::Arc;
+
+        let cache = Arc::new(FrameCache::new(10));
+
+        let mut handles = vec![];
+
+        // Spawn multiple threads writing to cache
+        for i in 0..5 {
+            let cache_clone = Arc::clone(&cache);
+            let handle = thread::spawn(move || {
+                let data = FrameData {
+                    polystream: vec![i as u8],
+                    bitmap: Some(vec![i as u8; 100]),
+                    triangle_strip: Some(vec![i as f32; 50]),
+                };
+                cache_clone.insert(i, data);
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify all data was inserted
+        for i in 0..5 {
+            assert!(cache.contains(&i));
+        }
     }
 }

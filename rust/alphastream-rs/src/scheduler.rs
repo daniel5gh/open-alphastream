@@ -1,9 +1,11 @@
 // Scheduler module
-// This module implements a hybrid index-timebase scheduler for managing frame processing tasks.
-// It supports prioritization, backpressure to prevent overload, and prefetching for smooth playback.
+// This module helps manage when to process video frames.
+// It acts like a smart task manager: decides which frames to work on first (priority queue),
+// prevents too many tasks running at once (backpressure), and loads future frames early (prefetching).
 
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
+use crate::cache::FrameCache;
 
 /// Represents a scheduled task with a frame index and priority.
 #[derive(Debug, Clone)]
@@ -33,18 +35,26 @@ impl Task {
 }
 
 /// The main Scheduler struct for managing frame processing tasks.
+/// This is the "brain" that coordinates frame processing:
+// - Keeps a prioritized to-do list of frames to process
+// - Ensures not too many workers are busy at once (prevents system overload)
+// - Automatically adds future frames to the list (prefetching for smooth playback)
+// - Tracks time so frames are processed in the right order
 pub struct Scheduler {
-    // Timebase constant: frames per second (60 FPS).
+    // Timebase constant: frames per second (60 FPS). Used to convert frame numbers to time.
     timebase_fps: f64,
     // Queue for pending tasks, prioritized by priority then frame index.
+    // Higher priority tasks get processed first.
     task_queue: VecDeque<Task>,
     // Channel sender for communicating with the processing loop.
+    // Like a message queue - workers can send tasks to the scheduler.
     task_sender: mpsc::UnboundedSender<Task>,
     // Channel receiver for the processing loop.
+    // The "inbox" where the scheduler receives new tasks.
     task_receiver: mpsc::UnboundedReceiver<Task>,
     // Maximum number of concurrent tasks to prevent overload (backpressure).
     max_concurrent: usize,
-    // Current number of active tasks.
+    // Current number of active tasks. Tracks how many workers are busy.
     active_tasks: usize,
     // Number of frames to prefetch ahead of current playback.
     prefetch_count: usize,
@@ -74,11 +84,19 @@ impl Scheduler {
     /// Schedule a new task for processing.
     /// Tasks are added to the queue and prioritized.
     pub fn schedule_task(&mut self, task: Task) {
-        // Insert task in priority order (higher priority first, then lower frame index)
-        let pos = self.task_queue.iter().position(|t| {
-            t.priority < task.priority || (t.priority == task.priority && t.frame_index > task.frame_index)
-        }).unwrap_or(self.task_queue.len());
-        self.task_queue.insert(pos, task);
+        // Check if a task with the same frame_index exists
+        if let Some(existing) = self.task_queue.iter_mut().find(|t| t.frame_index == task.frame_index) {
+            // Update priority if the new task has higher priority
+            if task.priority > existing.priority {
+                existing.priority = task.priority;
+            }
+        } else {
+            // Insert task in priority order (higher priority first, then lower frame index)
+            let pos = self.task_queue.iter().position(|t| {
+                t.priority < task.priority || (t.priority == task.priority && t.frame_index > task.frame_index)
+            }).unwrap_or(self.task_queue.len());
+            self.task_queue.insert(pos, task);
+        }
     }
 
     /// Get the next task to process, respecting backpressure.
@@ -88,6 +106,12 @@ impl Scheduler {
         }
         self.task_queue.pop_front().map(|task| {
             self.active_tasks += 1;
+            // reconsider prefetching, and who is responsible for it and will moderate it?
+            // Prefetch next frames if cache has space and the queue is smaller than cache size
+            // if self.task_queue.len() < self.cache.capacity() {
+            //     println!("Prefetching frame {}, cache size {}, queue {}", task.frame_index, self.cache.len(), self.task_queue.len());
+            //     self.prefetch(task.frame_index);
+            // }
             task
         })
     }
@@ -103,8 +127,10 @@ impl Scheduler {
     pub fn prefetch(&mut self, current_frame: usize) {
         for i in 1..=self.prefetch_count {
             let frame_index = current_frame + i;
-            let task = Task::with_priority(frame_index, 1); // Low priority for prefetch
-            self.schedule_task(task);
+            if !self.task_queue.iter().any(|t| t.frame_index == frame_index) {
+                let task = Task::new(frame_index);
+                self.schedule_task(task);
+            }
         }
     }
 
@@ -177,7 +203,8 @@ mod tests {
         for i in 1..=10 {
             let task = scheduler.next_task().unwrap();
             assert_eq!(task.frame_index, 5 + i);
-            assert_eq!(task.priority, 1);
+            // Prefetch tasks are scheduled with default priority 0 in implementation
+            assert_eq!(task.priority, 0);
             scheduler.complete_task();
         }
     }

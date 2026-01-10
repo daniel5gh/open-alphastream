@@ -177,9 +177,10 @@ impl<R: Read + Seek> ASFormat for ASVRFormat<R> {
         self.metadata.clone().ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string()))
     }
 
-    fn decode_frame(&mut self, frame_index: u32) -> Result<FrameData, FormatError> {
+    fn decode_frame(&mut self, mut frame_index: u32) -> Result<FrameData, FormatError> {
         if frame_index >= self.frame_sizes.len() as u32 {
-            return Err(FormatError::InvalidFormat("Frame index out of range".to_string()));
+            // clamp to max frame index
+            frame_index = self.frame_sizes.len() as u32 - 1;
         }
 
         // Seek to frame offset
@@ -293,9 +294,10 @@ impl<R: Read + Seek> ASFormat for ASVPFormat<R> {
         self.metadata.clone().ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string()))
     }
 
-    fn decode_frame(&mut self, frame_index: u32) -> Result<FrameData, FormatError> {
+    fn decode_frame(&mut self, mut frame_index: u32) -> Result<FrameData, FormatError> {
         if frame_index >= self.frame_sizes.len() as u32 {
-            return Err(FormatError::InvalidFormat("Frame index out of range".to_string()));
+            // clamp to max frame index
+            frame_index = self.frame_sizes.len() as u32 - 1;
         }
 
         // Seek to frame offset
