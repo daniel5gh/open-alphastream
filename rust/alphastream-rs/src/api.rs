@@ -137,13 +137,6 @@ impl AlphaStreamProcessor {
     /// If not cached, schedules the frame for background processing and returns None (will be available later).
     /// This non-blocking approach allows the caller to continue while processing happens in background.
     pub async fn get_frame(&self, frame_index: usize, _width: u32, _height: u32) -> Option<Vec<u8>> {
-        
-        // Check bounds using metadata
-        let meta = self.metadata().await.ok();
-        // let requested_frame_index = if let Some(meta) = meta {
-        //     // transparently mod on the max frame count.
-        //     frame_index % meta.frame_count as usize
-        // } else { frame_index };
         let requested_frame_index = frame_index;
         if let Some(frame_data) = self.cache.get(requested_frame_index) { // Check cache first
             if frame_data.bitmap.is_some() {
@@ -200,7 +193,6 @@ impl AlphaStreamProcessor {
     fn start_background_processing(&mut self) {
         let scheduler_clone = Arc::clone(&self.scheduler);
         let format_clone = Arc::clone(&self.format);
-        let cache = Arc::clone(&self.cache);
         let width = self.width;
         let height = self.height;
         let mode = self.mode.clone();
@@ -402,7 +394,7 @@ mod tests {
     #[tokio::test]
     async fn test_request_frame() {
         let test_file = create_test_asvp();
-        let mut processor = AlphaStreamProcessor::new_asvp(
+        let processor = AlphaStreamProcessor::new_asvp(
             test_file.path().to_str().unwrap(),
             16,
             16,

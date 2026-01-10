@@ -5,7 +5,6 @@
 
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
-use crate::cache::FrameCache;
 
 /// Represents a scheduled task with a frame index and priority.
 #[derive(Debug, Clone)]

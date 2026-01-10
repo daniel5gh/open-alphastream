@@ -355,7 +355,6 @@ impl<R: Read + Seek> ASFormat for ASVPFormat<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
 
     #[test]
     fn test_derive_key() {

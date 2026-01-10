@@ -91,13 +91,13 @@ mod tests {
 
     #[test]
     fn test_runtime_creation() {
-        let runtime = Runtime::new().expect("Failed to create runtime");
+        let _runtime = Runtime::new().expect("Failed to create runtime");
         // Runtime created successfully
     }
 
     #[test]
     fn test_runtime_with_threads() {
-        let runtime = Runtime::with_worker_threads(2).expect("Failed to create runtime with threads");
+        let _runtime = Runtime::with_worker_threads(2).expect("Failed to create runtime with threads");
         // Runtime with custom threads created successfully
     }
 
