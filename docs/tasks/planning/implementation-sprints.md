@@ -152,11 +152,11 @@ Unified API/FFI, advanced caching, scheduler integration, documentation, and CI/
 - Ensure CI pipeline and code review for all deliverables
 
 ### Tasks
-- [ ] [Task 12](docs/tasks/12-public-api-facade.md): Define and implement public API facade
-- [ ] [Task 13](docs/tasks/13-c-abi-pinvoke.md): Define and implement C ABI for P/Invoke
-- [ ] [Task 14](docs/tasks/14-error-model.md): Refactor error model
-- [ ] [Task 15](docs/tasks/15-benchmarks.md): Add benchmarks
-- [ ] [Task 16](docs/tasks/16-integration-tests.md): Implement integration tests
+- [x] [Task 12](docs/tasks/12-public-api-facade.md): Define and implement public API facade _(Completed: High-level API facade implemented in [`rust/alphastream-rs/src/api.rs`](rust/alphastream-rs/src/api.rs:1) with ergonomic methods, async support, and comprehensive tests.)_
+- [x] [Task 13](docs/tasks/13-c-abi-pinvoke.md): Define and implement C ABI for P/Invoke _(Completed: Stable C ABI implemented in [`rust/alphastream-rs/src/lib.rs`](rust/alphastream-rs/src/lib.rs:1), including all required extern functions, error handling, and .NET interop tests.)_
+- [x] [Task 14](docs/tasks/14-error-model.md): Refactor error model _(Completed: Per-instance error model with thread-safe error state and mapping, verified by tests in [`rust/alphastream-rs/src/lib.rs`](rust/alphastream-rs/src/lib.rs:1).)_
+- [x] [Task 15](docs/tasks/15-benchmarks.md): Add benchmarks _(Completed: Criterion-based benchmarks implemented in [`rust/alphastream-rs/benches/cache_benchmark.rs`](rust/alphastream-rs/benches/cache_benchmark.rs:1), covering cache and scheduler performance.)_
+- [x] [Task 16](docs/tasks/16-integration-tests.md): Implement integration tests _(Completed: Comprehensive integration tests in [`rust/alphastream-rs/tests/integration_tests.rs`](rust/alphastream-rs/tests/integration_tests.rs:1), covering full pipeline, error paths, concurrency, and FFI.)_
 - [ ] [Task 17](docs/tasks/17-builder-config.md): Add builder configuration
 - [ ] [Task 18](docs/tasks/18-metadata-timebase.md): Handle metadata and timebase
 - [ ] Documentation deliverables: Update API and bindings documentation
