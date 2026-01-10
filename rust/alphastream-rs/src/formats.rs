@@ -4,7 +4,7 @@
 //! AlphaStream vector resource files. It provides methods to access metadata, frame counts,
 //! and decode individual frames into polystream data for rasterization.
 
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, Write};
 use flate2::read::ZlibDecoder;
 use chacha20::ChaCha20Legacy as ChaCha20;
 use chacha20::cipher::{NewCipher, StreamCipher};
@@ -74,7 +74,7 @@ const PASSPHRASE: [u8; 32] = [
 
 
 /// Derive encryption key from scene parameters
-fn derive_key(scene_id: u32, version: &[u8], base_url: &[u8]) -> Result<[u8; 32], FormatError> {
+pub fn derive_key(scene_id: u32, version: &[u8], base_url: &[u8]) -> Result<[u8; 32], FormatError> {
     // Construct salt: scene_id (little-endian u32) + version + base_url
     let mut salt = Vec::new();
     salt.extend_from_slice(&scene_id.to_le_bytes());

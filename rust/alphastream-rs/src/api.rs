@@ -61,7 +61,7 @@ impl AlphaStreamProcessorBuilder {
         self.processing_mode = mode;
         self
     }
-    /// Build an AlphaStreamProcessor with the configured options (ASVP only for now)
+    /// Build an AlphaStreamProcessor with the configured options for ASVP (plaintext) files
     pub fn build_asvp(self, file_path: &str, width: u32, height: u32) -> Result<AlphaStreamProcessor, FormatError> {
         use crate::formats::ASVPFormat;
         use crate::cache::FrameCache;
@@ -73,6 +73,48 @@ impl AlphaStreamProcessorBuilder {
 
         let file = File::open(file_path)?;
         let format = Arc::new(Mutex::new(Box::new(ASVPFormat::new(file)?) as Box<dyn ASFormat + Send + Sync>));
+        let cache = Arc::new(FrameCache::new(self.cache_capacity));
+        let mut scheduler_obj = Scheduler::new();
+        scheduler_obj.set_cache(Arc::clone(&cache));
+        scheduler_obj.set_max_concurrent(self.connection_pool_size);
+        scheduler_obj.set_prefetch_count(self.prefetch_window);
+        let scheduler = Arc::new(Mutex::new(scheduler_obj));
+        let runtime = Runtime::with_worker_threads(self.runtime_threads).expect("Failed to create runtime");
+
+        let mut processor = AlphaStreamProcessor {
+            cache: Arc::clone(&cache),
+            scheduler,
+            format,
+            width,
+            height,
+            mode: self.processing_mode,
+            runtime: Some(runtime),
+            background_handle: None,
+        };
+        processor.start_background_processing();
+        Ok(processor)
+    }
+
+    /// Build an AlphaStreamProcessor with the configured options for ASVR (encrypted) files
+    pub fn build_asvr(
+        self,
+        file_path: &str,
+        scene_id: u32,
+        version: &[u8],
+        base_url: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<AlphaStreamProcessor, FormatError> {
+        use crate::formats::ASVRFormat;
+        use crate::cache::FrameCache;
+        use crate::scheduler::Scheduler;
+        use crate::runtime::Runtime;
+        use std::fs::File;
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let file = File::open(file_path)?;
+        let format = Arc::new(Mutex::new(Box::new(ASVRFormat::new(file, scene_id, version, base_url)?) as Box<dyn ASFormat + Send + Sync>));
         let cache = Arc::new(FrameCache::new(self.cache_capacity));
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
@@ -483,7 +525,32 @@ mod tests {
         let frame = processor.get_frame(0, 16, 16).await;
         assert!(frame.is_some());
     }
-// Remove duplicate imports
+    // 
+    // #[test]
+    // fn test_builder_build_asvr_and_metadata() {
+    //     use crate::testlib::create_test_asvr;
+    //     let test_file = create_test_asvr();
+    //     let builder = AlphaStreamProcessorBuilder::new()
+    //         .runtime_threads(2)
+    //         .cache_capacity(8)
+    //         .prefetch_window(1)
+    //         .processing_mode(ProcessingMode::Bitmap);
+    //     // Use dummy scene_id, version, base_url for test
+    //     let scene_id = 42;
+    //     let version = b"1.5.0";
+    //     let base_url = b"test.asvr";
+    //     let processor = builder.build_asvr(
+    //         test_file.path().to_str().unwrap(),
+    //         scene_id,
+    //         version,
+    //         base_url,
+    //         8,
+    //         8,
+    //     ).unwrap();
+    //     let rt = tokio::runtime::Runtime::new().unwrap();
+    //     let metadata = rt.block_on(async { processor.metadata().await.unwrap() });
+    //     assert_eq!(metadata.frame_count, 1);
+    // }
 
     #[tokio::test]
     async fn test_asvp_processor() {

@@ -1,6 +1,19 @@
 //! Test utilities for alphastream-rs
 // Provides helpers for creating test ASVP files and other test resources
 
+/// Create a minimal ASVR file for testing (encrypted, 1 frame, valid structure)
+// pub fn create_test_asvr() -> tempfile::NamedTempFile {
+//     use tempfile::NamedTempFile;
+//     use crate::formats::write_test_asvr_file;
+//     let mut file = NamedTempFile::new().unwrap();
+//     // Must match test values in builder test
+//     let scene_id = 42u32;
+//     let version = b"1.5.0";
+//     let base_url = b"test.asvr";
+//     write_test_asvr_file(&mut file, scene_id, version, base_url).unwrap();
+//     file
+// }
+
 use tempfile::NamedTempFile;
 use std::io::Write;
 

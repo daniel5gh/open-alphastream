@@ -217,15 +217,23 @@ pub extern "C" fn CV_init(
                 .prefetch_window(l1_buffer_init_length as usize)
                 .processing_mode(api::ProcessingMode::Both);
 
-            return match builder.build_asvp(path, width, height) {
-                Ok(proc) => {
-                    chandle.processor = Some(Box::new(proc));
-                    true
+            // extract filename only from path, all chars after last '/' and before '?' if any
+            let filename = path.rsplit_once('/').unwrap_or(("", path)).1;
+            let filename = filename.split_once('?').unwrap_or((filename, "")).0;
+
+            if let Ok(version) = CStr::from_ptr(version).to_str() {
+                return match builder.build_asvr(path, scene_id, version.as_bytes(), filename.as_bytes(), width, height) {
+                    Ok(proc) => {
+                        chandle.processor = Some(Box::new(proc));
+                        true
+                    }
+                    Err(e) => {
+                        chandle.set_error(2, &format!("Init error: {e}"));
+                        false
+                    }
                 }
-                Err(e) => {
-                    chandle.set_error(2, &format!("Init error: {e}"));
-                    false
-                }
+            } else {
+                chandle.set_error(1, "Invalid version");
             }
         } else {
             chandle.set_error(1, "Invalid base_url");
