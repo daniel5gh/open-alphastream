@@ -90,8 +90,124 @@ fn test_full_processor_lifecycle() {
         processor.get_frame(2, 16, 16).await;
         // Prefetch should have been triggered for frame 2
         // (no assertion here, but coverage for sequential prefetch logic)
-    });
-}
+            });
+        }
+        
+        #[test]
+        fn test_lru_eviction_edge_cases() {
+            use libalphastream::FrameCache;
+            use libalphastream::formats::FrameData;
+            // Small cache for eviction
+            let cache = FrameCache::new(2);
+            let d1 = FrameData { polystream: vec![1], bitmap: None, triangle_strip: None };
+            let d2 = FrameData { polystream: vec![2], bitmap: None, triangle_strip: None };
+            let d3 = FrameData { polystream: vec![3], bitmap: None, triangle_strip: None };
+            cache.insert(1, d1);
+            cache.insert(2, d2);
+            assert!(cache.contains(&1));
+            assert!(cache.contains(&2));
+            cache.insert(3, d3); // Should evict 1
+            assert!(!cache.contains(&1));
+            assert!(cache.contains(&2));
+            assert!(cache.contains(&3));
+            // Access 2, insert 4, should evict 3
+            cache.get(2);
+            let d4 = FrameData { polystream: vec![4], bitmap: None, triangle_strip: None };
+            cache.insert(4, d4);
+            assert!(cache.contains(&2));
+            assert!(!cache.contains(&3));
+            assert!(cache.contains(&4));
+        }
+        
+        #[test]
+        fn test_scheduler_prefetch_and_backpressure_edge() {
+            use libalphastream::FrameCache;
+            use libalphastream::formats::FrameData;
+            use libalphastream::scheduler::Scheduler;
+            use std::sync::Arc;
+            let cache = FrameCache::new(3);
+            let mut scheduler = Scheduler::new();
+            scheduler.set_cache(Arc::new(cache.clone()));
+            // Fill cache
+            for i in 0..3 {
+                cache.insert(i, FrameData {
+                    polystream: vec![i as u8],
+                    bitmap: None,
+                    triangle_strip: None,
+                });
+            }
+            scheduler.prefetch(0);
+            assert!(scheduler.next_task().is_none());
+            // Remove one, prefetch should schedule one
+            cache.remove(&0);
+            scheduler.prefetch(0);
+            let t = scheduler.next_task();
+            assert!(t.is_some());
+            // Backpressure: simulate max_concurrent
+            // simulate backpressure by scheduling and consuming a task, then not calling complete_task()
+            // (max_concurrent is private, so we can't set it directly)
+            scheduler.schedule_task(libalphastream::scheduler::Task::new(10));
+            let _ = scheduler.next_task();
+            assert!(scheduler.next_task().is_none());
+        }
+        
+        #[test]
+        fn test_cache_thread_safety_contention() {
+            use std::sync::Arc;
+            use std::thread;
+            use libalphastream::FrameCache;
+            use libalphastream::formats::FrameData;
+            let cache = Arc::new(FrameCache::new(8));
+            let mut handles = vec![];
+            for i in 0..8 {
+                let cache_clone = Arc::clone(&cache);
+                handles.push(thread::spawn(move || {
+                    for j in 0..100 {
+                        let idx = (i + j) % 8;
+                        let data = FrameData {
+                            polystream: vec![idx as u8],
+                            bitmap: Some(vec![idx as u8; 8]),
+                            triangle_strip: Some(vec![idx as f32; 8]),
+                        };
+                        cache_clone.insert(idx, data);
+                        let _ = cache_clone.get(idx);
+                    }
+                }));
+            }
+            for h in handles { h.join().unwrap(); }
+            // All keys should be present
+            for i in 0..8 {
+                assert!(cache.contains(&i));
+            }
+        }
+        
+        #[test]
+        fn test_scheduler_cache_integration_concurrent() {
+            use std::sync::Arc;
+            use std::thread;
+            use libalphastream::FrameCache;
+            use libalphastream::formats::FrameData;
+            use libalphastream::scheduler::{Scheduler, Task};
+            let cache = Arc::new(FrameCache::new(5));
+            let mut scheduler = Scheduler::new();
+            scheduler.set_cache(Arc::clone(&cache));
+            let mut handles = vec![];
+            for i in 0..5 {
+                let cache_clone = Arc::clone(&cache);
+                handles.push(thread::spawn(move || {
+                    let data = FrameData {
+                        polystream: vec![i as u8],
+                        bitmap: Some(vec![i as u8; 5]),
+                        triangle_strip: Some(vec![i as f32; 5]),
+                    };
+                    cache_clone.insert(i, data);
+                }));
+            }
+            for h in handles { h.join().unwrap(); }
+            // Scheduler should see cache as full
+            scheduler.prefetch(0);
+            assert!(scheduler.next_task().is_none());
+        }
 
 #[test]
 fn test_c_abi_integration() {
