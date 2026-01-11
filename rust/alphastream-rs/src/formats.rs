@@ -313,6 +313,13 @@ impl<R: Read + Seek> ASVRFormat<R> {
 
         // Decrypt header to get compressed_sizes_size (preserves keystream for sizes)
         let header = decrypt_frame_data(&encrypted_header, &key, 0xFFFFFFFF)?;
+        // expected 8 bytes: 04 00 00 00 00 00 00 00 for official asvr at version 1.5.0
+        // print warning if number is not 4
+        let file_version = u32::from_le_bytes(header[0..4].try_into().unwrap());
+        if file_version != 4 {
+            eprintln!("ASVR file version is not 4, but {}", file_version);
+        }
+
         let compressed_sizes_size = u32::from_le_bytes(header[12..16].try_into().unwrap());
 
         // Read encrypted sizes
@@ -440,6 +447,11 @@ impl<R: Read + Seek> ASVPFormat<R> {
         // Read header (16 bytes)
         let mut header = [0u8; 16];
         reader.read_exact(&mut header)?;
+        // expected 8 bytes for decrypted asvp is b"ASVPPLN1"
+        // print if this is not the case
+        if &header[0..8] != b"ASVPPLN1" {
+            eprintln!("ASVP file header is not 'ASVPPLN1', but {:?}", &header[0..8]);
+        }
         let compressed_sizes_size = u32::from_le_bytes(header[12..16].try_into().unwrap());
 
         // Read and decompress sizes table

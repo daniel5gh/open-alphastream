@@ -211,6 +211,7 @@ fn test_c_abi_integration() {
     let mut count: usize = 0;
     let success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
     assert!(success);
+    assert_eq!(count, 174);
 
     // Cleanup
     CV_destroy(handle);
