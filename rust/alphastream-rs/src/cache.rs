@@ -126,7 +126,7 @@ impl RingBufferCache {
         if frame_index < start || frame_index >= start + self.capacity {
             None // Out of range
         } else {
-            Some((frame_index - start) % self.capacity)
+            Some(frame_index % self.capacity)  // Fixed: consistent slot mapping
         }
     }
 
@@ -144,7 +144,7 @@ impl RingBufferCache {
         
         // Read lock only - no write needed for read operations
         let buffer = self.buffer.read().unwrap();
-        
+
         match &buffer[slot_index] {
             FrameSlot::Ready(data) => Some(data.clone()),
             _ => None,
@@ -168,7 +168,7 @@ impl RingBufferCache {
             let old_state = &buffer[slot_index];
             let was_in_progress = old_state.is_in_progress();
             let was_ready = old_state.is_ready();
-            
+
             buffer[slot_index] = FrameSlot::Ready(data);
             
             // Update counters based on state transition
@@ -381,7 +381,7 @@ impl RingBufferCache {
             // Clear slots that will be reused
             let advance = new_start - current;
             let mut buffer = self.buffer.write().unwrap();
-            
+
             for i in 0..advance.min(self.capacity) {
                 let slot_index = (i) % self.capacity;
                 // Track state transitions for atomic counters
