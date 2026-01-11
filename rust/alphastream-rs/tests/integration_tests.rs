@@ -3,6 +3,8 @@ use libalphastream::{CV_create, CV_destroy, CV_init, CV_get_frame, CV_get_triang
 use libalphastream::testlib::create_test_asvr;
 // Centralized test utility import
 use crate::testlib::create_test_asvp;
+use std::time::{Duration, Instant};
+use tokio::time::Instant as TokioInstant;
 
 #[test]
 fn test_full_processor_lifecycle() {
@@ -27,22 +29,36 @@ fn test_full_processor_lifecycle() {
     runtime.block_on(async {
         processor.request_frame(0).await.unwrap();
 
-        // Wait a bit for processing
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-        let frame = processor.get_frame(0, 16, 16).await.unwrap();
+        let start = TokioInstant::now();
+        let frame = loop {
+            if let Some(f) = processor.get_frame(0, 16, 16).await {
+                break f;
+            }
+            if start.elapsed() > tokio::time::Duration::from_millis(1000) {
+                panic!("frame not ready in time");
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        };
         assert_eq!(frame.len(), 256); // 16x16
 
-        // now with direct cache eviction in prev call, this is not available right away
-        let vertices = processor.get_triangle_strip_vertices(0).await.unwrap();
+        let start = TokioInstant::now();
+        let vertices = loop {
+            if let Some(v) = processor.get_triangle_strip_vertices(0).await {
+                break v;
+            }
+            if start.elapsed() > tokio::time::Duration::from_millis(1000) {
+                panic!("vertices not ready in time");
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        };
         assert_eq!(vertices.len(), 174); // Empty for this test data
 
         // Prefetch test: sequential access triggers prefetch
-        processor.get_frame(1, 16, 16).await;
-        processor.get_frame(2, 16, 16).await;
+        let _ = processor.get_frame(1, 16, 16).await; // may fail if no frame 1
+        let _ = processor.get_frame(2, 16, 16).await; // may fail if no frame 2
         // Prefetch should have been triggered for frame 2
         // (no assertion here, but coverage for sequential prefetch logic)
-            });
+    });
         }
         
         #[test]
@@ -213,12 +229,11 @@ fn test_c_abi_integration() {
     assert!(success);
 
     // Get frame (wait for processing)
+    let start = Instant::now();
     let mut frame_ptr = CV_get_frame(handle, 0);
-    let mut tries = 0;
-    while frame_ptr.is_null() && tries < 20 {
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    while frame_ptr.is_null() && start.elapsed() < Duration::from_millis(500) {
+        std::thread::sleep(Duration::from_millis(10));
         frame_ptr = CV_get_frame(handle, 0);
-        tries += 1;
     }
     assert!(!frame_ptr.is_null());
 
@@ -231,8 +246,12 @@ fn test_c_abi_integration() {
     // Get triangle strip
     let mut vertices: *const f32 = std::ptr::null();
     let mut count: usize = 0;
-    // now with direct cache eviction in prev call, this is not available right away
-    let success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+    let start = Instant::now();
+    let mut success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+    while !success && start.elapsed() < Duration::from_millis(500) {
+        std::thread::sleep(Duration::from_millis(10));
+        success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+    }
     assert!(success);
     assert_eq!(count, 174);
 
