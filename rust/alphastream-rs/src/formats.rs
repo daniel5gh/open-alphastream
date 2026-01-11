@@ -187,6 +187,8 @@ impl<W: Write> ASVPWriter<W> {
         
         // Write 16-byte header
         let mut header = [0u8; 16];
+        // we put "ASVPPLN1" as the first 8 bytes of the header, to make it easy to identify plaintext files
+        header[0..8].copy_from_slice(b"ASVPPLN1");
         header[12..16].copy_from_slice(&(compressed_sizes.len() as u32).to_le_bytes());
         self.writer.write_all(&header)?;
         self.writer.write_all(&compressed_sizes)?;
@@ -238,15 +240,28 @@ impl<W: Write> ASVRWriter<W> {
         let mut encrypted_frames = Vec::with_capacity(self.frames.len());
         
         for (i, frame) in self.frames.iter().enumerate() {
-            // The 4-byte length prefix is the EXPECTED uncompressed length, not compressed length
-            let uncompressed_len = frame.polystream.len() as u32;
-            let compressed = compress_zlib(&frame.polystream)?;
-            // Frame format: 4-byte length (uncompressed) + compressed data
-            let mut frame_data = Vec::new();
-            frame_data.extend_from_slice(&uncompressed_len.to_le_bytes());
-            frame_data.extend_from_slice(&compressed);
-            
-            let encrypted = encrypt_frame_data(&frame_data, &self.key, i as u32)?;
+            // a "polystream" is the uncompressed channel data, prefixed with the header
+            // keeping this code commented for when we'll have multiple separate channels on a FrameData
+            // const NR_CHANNELS: u32 = 1; // FrameData support only 1 channel at this time
+            // The 4-byte channel size is the uncompressed length in bytes of the channel data
+            // let uncompressed_channel_size = frame.polystream.len() as u32;
+            // frame format is:
+            // 4 bytes (uint32): number of channels (1)
+            // 4 bytes (uint32) * channel_count: channel sizes (uncompressed length)
+            // let mut frame_data = Vec::new();
+            // frame_data.extend_from_slice(&NR_CHANNELS.to_le_bytes());
+            // frame_data.extend_from_slice(&uncompressed_channel_size.to_le_bytes());
+            // frame_data.extend_from_slice(&frame.polystream);
+            let frame_data = &frame.polystream;
+
+            let uncompressed_plaintext_size = frame_data.len() as u32;
+            // careful, this is writing the compressed data into the frame_data buffer!
+            let compressed_data = compress_zlib(&frame_data)?;
+            let mut plaintext_channels = Vec::new();
+            plaintext_channels.extend_from_slice(&uncompressed_plaintext_size.to_le_bytes());
+            plaintext_channels.extend_from_slice(&compressed_data);
+
+            let encrypted = encrypt_frame_data(&plaintext_channels, &self.key, i as u32)?;
             frame_sizes.push(encrypted.len() as u64);
             encrypted_frames.push(encrypted);
         }
@@ -259,6 +274,8 @@ impl<W: Write> ASVRWriter<W> {
         
         // Encrypt header + sizes together (maintains keystream continuity)
         let mut header = [0u8; 16];
+        // first 8 bytes of an official asvr at version 1.5.0 is: 04 00 00 00 00 00 00 00
+        header[0..8].copy_from_slice(&[0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
         header[12..16].copy_from_slice(&(compressed_sizes.len() as u32).to_le_bytes());
         let mut to_encrypt = Vec::with_capacity(16 + compressed_sizes.len());
         to_encrypt.extend_from_slice(&header);
@@ -399,8 +416,10 @@ impl<R: Read + Seek> ASFormat for ASVRFormat<R> {
             return Err(FormatError::InvalidFormat("Channel sizes don't match data length".to_string()));
         }
 
+
         Ok(FrameData {
-            polystream: channel_data,
+            // polystream includes all channels and the header
+            polystream: decompressed,
             bitmap: None,
             triangle_strip: None,
         })
@@ -514,7 +533,7 @@ impl<R: Read + Seek> ASFormat for ASVPFormat<R> {
         }
 
         Ok(FrameData {
-            polystream: channel_data,
+            polystream: decompressed,
             bitmap: None,
             triangle_strip: None,
         })
@@ -644,10 +663,10 @@ mod tests {
         let mut format_reader = ASVPFormat::new(cursor).unwrap();
         
         assert_eq!(format_reader.frame_count().unwrap(), 2);
-        
-        // The reader strips the channel header, so polystream should be the channel data only
-        let expected_data_0 = &[0x01, 0x02, 0x03, 0x04];
-        let expected_data_1 = &[0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
+
+        // polystream is header + all channel data
+        let expected_data_0 = &[1, 0, 0, 0, 4, 0, 0, 0, 0x01, 0x02, 0x03, 0x04];
+        let expected_data_1 = &[1, 0, 0, 0, 6, 0, 0, 0, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
         
         let decoded_frame_0 = format_reader.decode_frame(0).unwrap();
         let decoded_frame_1 = format_reader.decode_frame(1).unwrap();
@@ -705,10 +724,10 @@ mod tests {
         let frame_count = format_reader.frame_count().unwrap();
         assert_eq!(frame_count, 3);
         
-        // The reader strips the channel header, so polystream should be the channel data only
-        let expected_data_0 = &[0x01, 0x02, 0x03, 0x04];
-        let expected_data_1 = &[0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
-        let expected_data_2 = &[0x0B, 0x0C, 0x0D, 0x0E, 0x0F];
+        // polystream is header + all channel data
+        let expected_data_0 = &[1, 0, 0, 0, 4, 0, 0, 0, 0x01, 0x02, 0x03, 0x04];
+        let expected_data_1 = &[1, 0, 0, 0, 6, 0, 0, 0, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
+        let expected_data_2 = &[1, 0, 0, 0, 5, 0, 0, 0, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F];
         
         let decoded_frame_0 = format_reader.decode_frame(0).unwrap();
         let decoded_frame_1 = format_reader.decode_frame(1).unwrap();
@@ -795,12 +814,11 @@ mod tests {
         
         // Try to decode frame 0 and frame 1111 (the hardcoded test case)
         let frame_0 = format_reader.decode_frame(0).expect("Failed to decode frame 0");
-        assert!(frame_0.polystream.is_empty(), "Frame 0 should not have data");
-        
+        assert!(!frame_0.polystream.is_empty(), "Frame 0 should not data");
+
+        assert_eq!(frame_count, 16375, "Real file should have at 16375 frames");
         // Frame 1111 is a known test vector
-        if frame_count > 1111 {
-            let frame_1111 = format_reader.decode_frame(1111).expect("Failed to decode frame 1111");
-            assert!(!frame_1111.polystream.is_empty(), "Frame 1111 should have data");
-        }
+        let frame_1111 = format_reader.decode_frame(1111).expect("Failed to decode frame 1111");
+        assert!(!frame_1111.polystream.is_empty(), "Frame 1111 should have data");
     }
 }

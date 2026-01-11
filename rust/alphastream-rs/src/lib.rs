@@ -178,7 +178,7 @@ pub extern "C" fn CV_get_frame_size(handle: *mut AlphaStreamCHandle) -> c_uint {
 /// This sets up the processor for AlphaStream file or server access.
 /// Parameters:
 /// - handle: The processor from CV_create()
-/// - base_url: Server URL as C string (e.g., "https://server.com")
+/// - base_url: Server URL as C string (e.g., "https://server.com") and must be an encrypted asvr file
 /// - scene_id: Numeric ID of the scene to load
 /// - width/height: Output dimensions for rendered frames
 /// - version: Protocol version string
@@ -217,8 +217,11 @@ pub extern "C" fn CV_init(
                 .prefetch_window(l1_buffer_init_length as usize)
                 .processing_mode(api::ProcessingMode::Both);
 
-            // extract filename only from path, all chars after last '/' and before '?' if any
-            let filename = path.rsplit_once('/').unwrap_or(("", path)).1;
+            // extract filename only from path which can be a URL or a file path with path delimiter ('/' or '\')
+            // all chars after last path delimiter ('/' or '\') and before '?' if any
+            // first replace '\\' with '/' to normalize path format
+            let filename = path.replace('\\', "/");
+            let filename = filename.rsplit_once('/').unwrap_or((path, "")).1;
             let filename = filename.split_once('?').unwrap_or((filename, "")).0;
 
             if let Ok(version) = CStr::from_ptr(version).to_str() {
@@ -337,7 +340,7 @@ pub fn echo(input: &str) -> String { input.to_string() }
 mod tests {
     use super::*;
     use std::ffi::CString;
-    use crate::testlib::create_test_asvp;
+    use crate::testlib::{create_test_asvr};
 
     #[test]
     fn version_is_semver_like() { assert!(version().split('.').count() >= 3); }
@@ -363,11 +366,11 @@ mod tests {
         let handle = CV_create();
         assert!(!handle.is_null());
 
-        // Create a test ASVP file and use its path for base_url
-        let test_file = create_test_asvp();
+        // Initialize with a real test file
+        let version = CString::new("1.0.0").unwrap();
+        let test_file = create_test_asvr(123, version.as_bytes(), 1).unwrap();
         let test_path = test_file.path().to_str().unwrap();
         let base_url = CString::new(test_path).unwrap();
-        let version = CString::new("1.0.0").unwrap();
 
         let success = CV_init(
             handle,
@@ -397,11 +400,12 @@ mod tests {
         let handle = CV_create();
 
         // Initialize with a real test file
-        let test_file = create_test_asvp();
+        let version = CString::new("1.0.0").unwrap();
+        let test_file = create_test_asvr(123, version.as_bytes(), 1).unwrap();
         let test_path = test_file.path().to_str().unwrap();
         let base_url = CString::new(test_path).unwrap();
-        let version = CString::new("1.0.0").unwrap();
-        CV_init(
+
+        let success = CV_init(
             handle,
             base_url.as_ptr(),
             123,
@@ -415,6 +419,8 @@ mod tests {
             5000,
             30000,
         );
+
+        assert!(success);
 
         // Get frame 0, trigger processing
         let _ = CV_get_frame(handle, 0);
@@ -445,10 +451,11 @@ mod tests {
         let handle = CV_create();
 
         // Initialize with a real test file
-        let test_file = create_test_asvp();
+        let version = CString::new("1.0.0").unwrap();
+        let test_file = create_test_asvr(123, version.as_bytes(), 1).unwrap();
         let test_path = test_file.path().to_str().unwrap();
         let base_url = CString::new(test_path).unwrap();
-        let version = CString::new("1.0.0").unwrap();
+
         CV_init(
             handle,
             base_url.as_ptr(),
@@ -474,7 +481,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
         assert_eq!(success, true);
-        assert_eq!(count, 0);
+        assert_eq!(count, 174);
         assert!(!vertices.is_null());
 
         CV_destroy(handle);
@@ -522,10 +529,13 @@ mod tests {
     #[test]
     fn test_c_abi_triangle_strip_out_of_range() {
         let handle = CV_create();
-        let test_file = create_test_asvp();
+
+        // Initialize with a real test file
+        let version = CString::new("1.0.0").unwrap();
+        let test_file = create_test_asvr(123, version.as_bytes(), 1).unwrap();
         let test_path = test_file.path().to_str().unwrap();
         let base_url = CString::new(test_path).unwrap();
-        let version = CString::new("1.0.0").unwrap();
+
         CV_init(
             handle,
             base_url.as_ptr(),

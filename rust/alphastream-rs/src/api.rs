@@ -386,48 +386,55 @@ impl AlphaStreamProcessor {
                     let cache = Arc::clone(&cache_clone);
                     let handle = tokio::task::spawn_blocking(move || {
                         let mut format = format.blocking_lock();
-                        if let Ok(frame_data) = format.decode_frame(frame_index as u32) {
-                            println!("[alphastream] Processing frame {}", frame_index);
-                            let (_channel_count, channel_sizes, channel_data) = AlphaStreamProcessor::parse_polystream(&frame_data.polystream);
-                            let mut bitmap = None;
-                            let mut triangle_strip = None;
 
-                            if matches!(mode, ProcessingMode::Bitmap | ProcessingMode::Both) {
-                                let mut mask = vec![0u8; (width * height) as usize];
-                                let mut offset = 0;
-                                for &size in &channel_sizes {
-                                    let channel_data_slice = &channel_data[offset..offset + size as usize];
-                                    let channel_mask = PolystreamRasterizer::rasterize(channel_data_slice, width, height);
-                                    for (i, &pixel) in channel_mask.iter().enumerate() {
-                                        if pixel > 0 {
-                                            mask[i] = 255;
-                                        }
+                        let frame_data = match format.decode_frame(frame_index as u32) {
+                            Ok(data) => data,
+                            Err(e) => {
+                                println!("[alphastream] Error decoding frame {}: {}", frame_index, e);
+                                return;
+                            }
+                        };
+
+                        println!("[alphastream] Processing frame {}", frame_index);
+                        let (_channel_count, channel_sizes, channel_data) = AlphaStreamProcessor::parse_polystream(&frame_data.polystream);
+                        let mut bitmap = None;
+                        let mut triangle_strip = None;
+
+                        if matches!(mode, ProcessingMode::Bitmap | ProcessingMode::Both) {
+                            let mut mask = vec![0u8; (width * height) as usize];
+                            let mut offset = 0;
+                            for &size in &channel_sizes {
+                                let channel_data_slice = &channel_data[offset..offset + size as usize];
+                                let channel_mask = PolystreamRasterizer::rasterize(channel_data_slice, width, height);
+                                for (i, &pixel) in channel_mask.iter().enumerate() {
+                                    if pixel > 0 {
+                                        mask[i] = 255;
                                     }
-                                    offset += size as usize;
                                 }
-                                bitmap = Some(mask);
+                                offset += size as usize;
                             }
-
-                            if matches!(mode, ProcessingMode::TriangleStrip | ProcessingMode::Both) {
-                                let mut vertices = Vec::new();
-                                let mut offset = 0;
-                                for &size in &channel_sizes {
-                                    let channel_data_slice = &channel_data[offset..offset + size as usize];
-                                    let channel_strip = PolystreamRasterizer::polystream_to_triangle_strip(channel_data_slice);
-                                    vertices.extend(channel_strip);
-                                    offset += size as usize;
-                                }
-                                triangle_strip = Some(vertices);
-                            }
-
-                            let processed_frame = FrameData {
-                                polystream: frame_data.polystream,
-                                bitmap,
-                                triangle_strip,
-                            };
-                            cache.insert(frame_index, processed_frame);
-                            println!("[alphastream] Frame {} processed, cache size: {}", frame_index, cache.len());
+                            bitmap = Some(mask);
                         }
+
+                        if matches!(mode, ProcessingMode::TriangleStrip | ProcessingMode::Both) {
+                            let mut vertices = Vec::new();
+                            let mut offset = 0;
+                            for &size in &channel_sizes {
+                                let channel_data_slice = &channel_data[offset..offset + size as usize];
+                                let channel_strip = PolystreamRasterizer::polystream_to_triangle_strip(channel_data_slice);
+                                vertices.extend(channel_strip);
+                                offset += size as usize;
+                            }
+                            triangle_strip = Some(vertices);
+                        }
+
+                        let processed_frame = FrameData {
+                            polystream: frame_data.polystream,
+                            bitmap,
+                            triangle_strip,
+                        };
+                        cache.insert(frame_index, processed_frame);
+                        println!("[alphastream] Frame {} processed, cache size: {}", frame_index, cache.len());
                     });
 
                     let _ = handle.await;
@@ -511,7 +518,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_builder_build_asvp_and_processing() {
-        let test_file = create_test_asvp();
+        let test_file = create_test_asvp(1).unwrap();
         let builder = AlphaStreamProcessorBuilder::new()
             .runtime_threads(4)
             .cache_capacity(16)
@@ -554,7 +561,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_asvp_processor() {
-        let test_file = create_test_asvp();
+        let test_file = create_test_asvp(1).unwrap();
         let processor = AlphaStreamProcessor::new_asvp(
             test_file.path().to_str().unwrap(),
             16,
@@ -574,12 +581,12 @@ mod tests {
         let _ = processor.get_triangle_strip_vertices(0).await;
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         let vertices = processor.get_triangle_strip_vertices(0).await.unwrap();
-        assert_eq!(vertices.len(), 0);
+        assert_eq!(vertices.len(), 174);
     }
 
     #[tokio::test]
     async fn test_request_frame() {
-        let test_file = create_test_asvp();
+        let test_file = create_test_asvp(1).unwrap();
         let processor = AlphaStreamProcessor::new_asvp(
             test_file.path().to_str().unwrap(),
             16,
@@ -603,7 +610,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_processing_modes() {
-        let test_file = create_test_asvp();
+        let test_file = create_test_asvp(1).unwrap();
         let processor = AlphaStreamProcessor::new_asvp(
             test_file.path().to_str().unwrap(),
             16,

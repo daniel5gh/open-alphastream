@@ -1,12 +1,12 @@
 use libalphastream::*;
 use libalphastream::{CV_create, CV_destroy, CV_init, CV_get_frame, CV_get_triangle_strip_vertices};
-
+use libalphastream::testlib::create_test_asvr;
 // Centralized test utility import
 use crate::testlib::create_test_asvp;
 
 #[test]
 fn test_full_processor_lifecycle() {
-    let test_file = create_test_asvp();
+    let test_file = create_test_asvp(1).unwrap();
 
     // Create processor
     let processor = AlphaStreamProcessor::new_asvp(
@@ -34,7 +34,7 @@ fn test_full_processor_lifecycle() {
         assert_eq!(frame.len(), 256); // 16x16
 
         let vertices = processor.get_triangle_strip_vertices(0).await.unwrap();
-        assert_eq!(vertices.len(), 0); // Empty for this test data
+        assert_eq!(vertices.len(), 174); // Empty for this test data
 
         // Prefetch test: sequential access triggers prefetch
         processor.get_frame(1, 16, 16).await;
@@ -138,7 +138,7 @@ fn test_full_processor_lifecycle() {
             use std::thread;
             use libalphastream::FrameCache;
             use libalphastream::formats::FrameData;
-            use libalphastream::scheduler::{Scheduler, Task};
+            use libalphastream::scheduler::{Scheduler};
             let cache = Arc::new(FrameCache::new(5));
             let mut scheduler = Scheduler::new();
             scheduler.set_cache(Arc::clone(&cache));
@@ -168,11 +168,11 @@ fn test_c_abi_integration() {
     let handle = CV_create();
     assert!(!handle.is_null());
 
-    // Initialize
-    // Use a real test file for processor-backed FFI
-    let test_file = create_test_asvp();
-    let base_url = CString::new(test_file.path().to_str().unwrap()).unwrap();
+    // Initialize with a real test file
     let version = CString::new("1.0.0").unwrap();
+    let test_file = create_test_asvr(123, version.as_bytes(), 1).unwrap();
+    let test_path = test_file.path().to_str().unwrap();
+    let base_url = CString::new(test_path).unwrap();
 
     let success = CV_init(
         handle,
