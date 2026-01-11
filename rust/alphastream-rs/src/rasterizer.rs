@@ -89,25 +89,25 @@ impl PolystreamRasterizer {
 
     /// Builds a list of edges from the points.
     /// Each edge is (x0, y0, x1, y1), skipping horizontal edges.
-    fn build_edges(points: &[(i32, i32)]) -> Vec<(i32, i32, i32, i32)> {
-        let mut edges = Vec::new();
-        for window in points.windows(2) {
-            let (x0, y0) = window[0];
-            let (x1, y1) = window[1];
-            if y0 != y1 {
-                edges.push((x0, y0, x1, y1));
-            }
-        }
-        // Close the polygon if not already closed
-        if points.len() > 1 && points[0] != points[points.len() - 1] {
-            let (x0, y0) = points[points.len() - 1];
-            let (x1, y1) = points[0];
-            if y0 != y1 {
-                edges.push((x0, y0, x1, y1));
-            }
-        }
-        edges
-    }
+    // fn build_edges(points: &[(i32, i32)]) -> Vec<(i32, i32, i32, i32)> {
+    //     let mut edges = Vec::new();
+    //     for window in points.windows(2) {
+    //         let (x0, y0) = window[0];
+    //         let (x1, y1) = window[1];
+    //         if y0 != y1 {
+    //             edges.push((x0, y0, x1, y1));
+    //         }
+    //     }
+    //     // Close the polygon if not already closed
+    //     if points.len() > 1 && points[0] != points[points.len() - 1] {
+    //         let (x0, y0) = points[points.len() - 1];
+    //         let (x1, y1) = points[0];
+    //         if y0 != y1 {
+    //             edges.push((x0, y0, x1, y1));
+    //         }
+    //     }
+    //     edges
+    // }
 
     /// Performs scanline even-odd fill on the edges to produce the R8 mask.
     fn scanline_fill_polygon(points: &[(i32, i32)], width: u32, height: u32) -> Vec<u8> {
