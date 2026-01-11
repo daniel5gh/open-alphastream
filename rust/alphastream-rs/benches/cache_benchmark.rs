@@ -2,31 +2,54 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use libalphastream::cache::{FrameCache, FrameData};
 
 fn bench_cache_operations(c: &mut Criterion) {
-    let cache = FrameCache::new(1000);
     let data = FrameData {
         polystream: vec![1, 2, 3, 4],
-        bitmap: Some(vec![128; 1920 * 1080]), // Full HD frame
-        triangle_strip: Some(vec![0.0; 1000]), // Triangle strip data
+        bitmap: Some(vec![128; 100 * 100]), // Smaller frame for isolating copying effects
+        triangle_strip: Some(vec![0.0; 100]), // Smaller triangle strip data
     };
 
     c.bench_function("cache_insert", |b| {
+        let cache = FrameCache::new(1000);
+        let mut key = 0;
         b.iter(|| {
-            cache.insert(black_box(42), black_box(data.clone()));
+            cache.insert(black_box(key), black_box(data.clone()));
+            key += 1;
         })
     });
 
-    // Pre-populate for get benchmark
-    cache.insert(42, data);
-
-    c.bench_function("cache_get", |b| {
+    c.bench_function("cache_get_hit", |b| {
+        let cache = FrameCache::new(1000);
+        for i in 0..1000 {
+            cache.insert(i, data.clone());
+        }
+        let mut key = 0;
         b.iter(|| {
-            let _ = cache.get(black_box(42));
+            let _ = cache.get(black_box(key % 1000));
+            key += 1;
+        })
+    });
+
+    c.bench_function("cache_get_miss", |b| {
+        let cache = FrameCache::new(1000);
+        for i in 0..1000 {
+            cache.insert(i, data.clone());
+        }
+        let mut key = 1000;
+        b.iter(|| {
+            let _ = cache.get(black_box(key));
+            key += 1;
         })
     });
 
     c.bench_function("cache_contains", |b| {
+        let cache = FrameCache::new(1000);
+        for i in 0..1000 {
+            cache.insert(i, data.clone());
+        }
+        let mut key = 0;
         b.iter(|| {
-            let _ = cache.contains(&black_box(42));
+            let _ = cache.contains(&black_box(key % 1000));
+            key += 1;
         })
     });
 }
