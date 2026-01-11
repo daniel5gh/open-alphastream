@@ -46,29 +46,37 @@ fn test_full_processor_lifecycle() {
         }
         
         #[test]
-        fn test_lru_eviction_edge_cases() {
+        fn test_ring_buffer_range_handling() {
             use libalphastream::FrameCache;
             use libalphastream::formats::FrameData;
-            // Small cache for eviction
-            let cache = FrameCache::new(2);
+            // Test ring buffer range behavior (replaces LRU eviction test)
+            let cache = FrameCache::new(3);
+            let d0 = FrameData { polystream: vec![0], bitmap: None, triangle_strip: None };
             let d1 = FrameData { polystream: vec![1], bitmap: None, triangle_strip: None };
             let d2 = FrameData { polystream: vec![2], bitmap: None, triangle_strip: None };
-            let d3 = FrameData { polystream: vec![3], bitmap: None, triangle_strip: None };
+            
+            // Insert frames 0, 1, 2 (all within initial range [0, 3))
+            cache.insert(0, d0);
             cache.insert(1, d1);
             cache.insert(2, d2);
+            assert!(cache.contains(&0));
             assert!(cache.contains(&1));
             assert!(cache.contains(&2));
-            cache.insert(3, d3); // Should evict 1
-            assert!(!cache.contains(&1));
-            assert!(cache.contains(&2));
+            
+            // Frame 3 is out of range initially
+            let d3 = FrameData { polystream: vec![3], bitmap: None, triangle_strip: None };
+            assert!(!cache.insert(3, d3.clone())); // Should fail, out of range
+            
+            // Advance start to make room for frame 3
+            cache.advance_start(1);
+            // Now range is [1, 4), frame 0 is out of range
+            assert!(!cache.is_in_range(0));
+            assert!(cache.is_in_range(1));
+            assert!(cache.is_in_range(3));
+            
+            // Now we can insert frame 3
+            assert!(cache.insert(3, d3));
             assert!(cache.contains(&3));
-            // Access 2, insert 4, should evict 3
-            cache.get(2);
-            let d4 = FrameData { polystream: vec![4], bitmap: None, triangle_strip: None };
-            cache.insert(4, d4);
-            assert!(cache.contains(&2));
-            assert!(!cache.contains(&3));
-            assert!(cache.contains(&4));
         }
         
         #[test]
@@ -77,29 +85,42 @@ fn test_full_processor_lifecycle() {
             use libalphastream::formats::FrameData;
             use libalphastream::scheduler::Scheduler;
             use std::sync::Arc;
-            let cache = FrameCache::new(3);
+            let cache = Arc::new(FrameCache::new(4));
             let mut scheduler = Scheduler::new();
-            scheduler.set_cache(Arc::new(cache.clone()));
-            // Fill cache
-            for i in 0..3 {
+            scheduler.set_cache(Arc::clone(&cache));
+            scheduler.set_prefetch_count(4);
+            
+            // Fill cache with frames 0, 1, 2, 3 (entire capacity)
+            for i in 0..4 {
                 cache.insert(i, FrameData {
                     polystream: vec![i as u8],
                     bitmap: None,
                     triangle_strip: None,
                 });
             }
+            
+            // Prefetch at frame 0 should not schedule (cache full, all Ready)
             scheduler.prefetch(0);
             assert!(scheduler.next_task().is_none());
-            // Remove one, prefetch should schedule one
-            cache.remove(&0);
-            scheduler.prefetch(0);
+            
+            // Advance start to make room for new frames
+            // New range is [2, 6), frames 0 and 1 are now out of range
+            cache.advance_start(2);
+            
+            // Now prefetch should be able to schedule frames 4, 5 (within new range)
+            scheduler.prefetch(2);
             let t = scheduler.next_task();
             assert!(t.is_some());
-            // Backpressure: simulate max_concurrent
-            // simulate backpressure by scheduling and consuming a task, then not calling complete_task()
-            // (max_concurrent is private, so we can't set it directly)
-            scheduler.schedule_task(libalphastream::scheduler::Task::new(10));
-            let _ = scheduler.next_task();
+            let frame_idx = t.unwrap().frame_index;
+            assert!(frame_idx >= 3 && frame_idx < 6, "Expected frame in [3,6), got {}", frame_idx);
+            
+            // Backpressure: simulate max_concurrent by not calling complete_task()
+            // Schedule another task and try to get it without completing the previous one
+            scheduler.schedule_task(libalphastream::scheduler::Task::new(4));
+            // With max_concurrent defaulting to 16, we need to exhaust it
+            // For simplicity, just verify the mechanism works
+            scheduler.set_max_concurrent(1);
+            // Already have 1 active task from above, so next should return None
             assert!(scheduler.next_task().is_none());
         }
         

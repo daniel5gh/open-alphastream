@@ -288,19 +288,18 @@ impl AlphaStreamProcessor {
     /// This non-blocking approach allows the caller to continue while processing happens in background.
     pub async fn get_frame(&self, frame_index: usize, _width: u32, _height: u32) -> Option<Vec<u8>> {
         let requested_frame_index = frame_index;
+        
+        // Update play head position - this handles seek detection and cache invalidation
+        // The ring buffer automatically handles eviction, no manual removal needed
+        self.cache.update_play_head(requested_frame_index);
+
+        let mut scheduler = self.scheduler.lock().await; // Lock scheduler (async mutex)
         if let Some(frame_data) = self.cache.get(requested_frame_index) { // Check cache first
             if let Some(bitmap) = frame_data.bitmap.clone() {
-                // Remove frames from cache after returning one to avoid deadlock
-                // self.cache.remove_lru();
-                let removed = self.cache.remove(&(frame_index-1));
-                if removed.is_none() {
-                    self.cache.remove(&frame_index);
-                }
                 return Some(bitmap);
             }
         }
         // Not in cache, schedule for processing
-        let mut scheduler = self.scheduler.lock().await; // Lock scheduler (async mutex)
         let task = Task::with_priority(requested_frame_index, 10); // High priority for user-requested frames
         scheduler.schedule_task(task);
 
@@ -314,6 +313,9 @@ impl AlphaStreamProcessor {
     /// Similar to get_frame but for 3D geometry data. Checks cache first, schedules if needed.
     /// Returns None if not ready yet, allowing non-blocking operation.
     pub async fn get_triangle_strip_vertices(&self, frame_index: usize) -> Option<Vec<f32>> {
+        // Update play head position for seek detection
+        self.cache.update_play_head(frame_index);
+        
         if let Some(frame_data) = self.cache.get(frame_index) { // Cache check
             if frame_data.triangle_strip.is_some() {
                 return frame_data.triangle_strip.clone(); // Return cached vertices
@@ -380,12 +382,15 @@ impl AlphaStreamProcessor {
                     // let num_queued_tasks = scheduler.get_number_of_queued_tasks();
                     // let num_active_tasks = scheduler.get_number_of_active_tasks();
                     // let num_max_concurrent = scheduler.get_number_of_max_concurrent_tasks();
-                    // println!("[alphastream debug] Background processing loop: {} queued tasks, {} active tasks, {} max concurrent", num_queued_tasks, num_active_tasks, num_max_concurrent);
+                    // let num_running_tasks = running_tasks.len();
+                    // println!("[alphastream debug] Background processing loop: {} queued tasks, {} active tasks, {} max concurrent, {} running tasks", num_queued_tasks, num_active_tasks, num_max_concurrent, num_running_tasks);
                     while let Some(task) = scheduler.next_task() {
                         let frame_index = task.frame_index;
                         let format = Arc::clone(&format_clone);
                         let cache = Arc::clone(&cache_clone);
                         let mode = mode.clone();
+                        // Capture generation when task is scheduled for stale task detection
+                        let task_generation = cache.generation();
                         let handle = tokio::task::spawn_blocking(move || {
                             let mut format = format.blocking_lock();
                             let frame_data = match format.decode_frame(frame_index as u32) {
@@ -429,9 +434,15 @@ impl AlphaStreamProcessor {
                                 bitmap,
                                 triangle_strip,
                             };
-                            cache.insert(frame_index, processed_frame);
+                            
+                            // Check generation before inserting - discard stale results
+                            // This handles the case where a seek occurred while this task was in-flight
+                            if cache.generation() == task_generation {
+                                // insert() also checks is_in_range() as a secondary guard
+                                cache.insert(frame_index, processed_frame);
+                            }
                             // let thread_id = std::thread::current().id();
-                            // println!("[alphastream debug] Frame {} processed [thread {:?}]", frame_index, thread_id);
+                            // println!("[alphastream debug] Frame {} processed [thread {:?} task gen {}]", frame_index, thread_id, task_generation);
                             (frame_index, true)
                         });
                         running_tasks.push(async move {
@@ -442,8 +453,11 @@ impl AlphaStreamProcessor {
                 }
                 // Poll for completed tasks
                 if let Some((_frame_index, _ok)) = running_tasks.next().await {
+                    let wait_start = std::time::Instant::now();
                     let mut scheduler = scheduler_clone.lock().await;
                     scheduler.complete_task();
+                    // let wait_duration = wait_start.elapsed();
+                    // println!("[alphastream debug] Completed tasks in {} ms", wait_duration.as_millis());
                 } else {
                     // No running tasks, sleep briefly
                     tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
@@ -501,7 +515,7 @@ mod tests {
         assert_eq!(builder.runtime_threads, 0);
         assert_eq!(builder.timeout_seconds, 30);
         assert_eq!(builder.cache_capacity, 512);
-        assert_eq!(builder.prefetch_window, 10);
+        assert_eq!(builder.prefetch_window, 16);
         assert_eq!(builder.processing_mode, ProcessingMode::Bitmap);
 
         let builder = builder
