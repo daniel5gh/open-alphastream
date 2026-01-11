@@ -431,6 +431,7 @@ impl AlphaStreamProcessor {
                             }
                             let processed_frame = FrameData {
                                 polystream: frame_data.polystream,
+                                // clone here?
                                 bitmap,
                                 triangle_strip,
                             };
