@@ -126,7 +126,7 @@ impl RingBufferCache {
         if frame_index < start || frame_index >= start + self.capacity {
             None // Out of range
         } else {
-            Some(frame_index % self.capacity)  // Fixed: consistent slot mapping
+            Some((frame_index - start) % self.capacity)
         }
     }
 
@@ -372,28 +372,14 @@ impl RingBufferCache {
 
     /// Advance the start_index to allow caching newer frames.
     /// Used when the play head moves forward and we need to make room.
-    /// 
+    ///
     /// # Arguments
     /// * `new_start` - The new start_index value
     pub fn advance_start(&self, new_start: usize) {
         let current = self.start_index.load(Ordering::Acquire);
         if new_start > current {
-            // Clear slots that will be reused
-            let advance = new_start - current;
-            let mut buffer = self.buffer.write().unwrap();
-
-            for i in 0..advance.min(self.capacity) {
-                let slot_index = (i) % self.capacity;
-                // Track state transitions for atomic counters
-                let old_state = &buffer[slot_index];
-                if old_state.is_ready() {
-                    self.ready_count.fetch_sub(1, Ordering::Release);
-                } else if old_state.is_in_progress() {
-                    self.in_progress_count.fetch_sub(1, Ordering::Release);
-                }
-                buffer[slot_index] = FrameSlot::Empty;
-            }
-            
+            // Invalidate the entire cache to avoid data misplacement due to ring buffer wrapping
+            self.invalidate_internal();
             self.start_index.store(new_start, Ordering::Release);
         }
     }
