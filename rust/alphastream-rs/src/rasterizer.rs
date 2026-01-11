@@ -22,8 +22,7 @@ impl PolystreamRasterizer {
         if points.len() < 3 {
             return vec![0; (width * height) as usize];
         }
-        let edges = Self::build_edges(&points);
-        Self::scanline_fill(&edges, width, height)
+        Self::scanline_fill_polygon(&points, width, height)
     }
 
     /// Converts a polystream into a triangle strip of vertices.
@@ -111,36 +110,92 @@ impl PolystreamRasterizer {
     }
 
     /// Performs scanline even-odd fill on the edges to produce the R8 mask.
-    fn scanline_fill(edges: &[(i32, i32, i32, i32)], width: u32, height: u32) -> Vec<u8> {
+    fn scanline_fill_polygon(points: &[(i32, i32)], width: u32, height: u32) -> Vec<u8> {
+        if points.len() < 3 {
+            return vec![0u8; (width * height) as usize];
+        }
         let mut mask = vec![0u8; (width * height) as usize];
+        // Build edges, draw all lines (including horizontal)
+        let mut edges = Vec::new();
+        for window in points.windows(2) {
+            let (x0, y0) = window[0];
+            let (x1, y1) = window[1];
+            PolystreamRasterizer::draw_line(&mut mask, width as i32, height as i32, x0, y0, x1, y1);
+            if y0 != y1 {
+                edges.push((x0, y0, x1, y1));
+            }
+        }
+        // Optionally close polygon if not closed
+        if points[0] != *points.last().unwrap() {
+            let (x0, y0) = *points.last().unwrap();
+            let (x1, y1) = points[0];
+            PolystreamRasterizer::draw_line(&mut mask, width as i32, height as i32, x0, y0, x1, y1);
+            if y0 != y1 {
+                edges.push((x0, y0, x1, y1));
+            }
+        }
+        // Fill by scanline
         for y in 0..height as i32 {
             let mut xs = Vec::new();
-            for &(x0, y0, x1, y1) in edges {
+            for &(x0, y0, x1, y1) in &edges {
                 let ymin = y0.min(y1);
                 let ymax = y0.max(y1);
-                if y >= ymin && y < ymax {
-                    let x = if x0 == x1 {
-                        x0
-                    } else {
-                        x0 + (((y - y0) as f32 / (y1 - y0) as f32) * (x1 - x0) as f32) as i32
-                    };
-                    xs.push(x);
+                if y1 == y0 { continue; }
+                if y < ymin || y >= ymax {
+                    continue;
                 }
+                let x_int = if x0 == x1 {
+                    x0
+                } else {
+                    let t = (y - y0) as f32 / (y1 - y0) as f32;
+                    (x0 as f32 + t * (x1 - x0) as f32).round() as i32
+                };
+                xs.push(x_int);
             }
             xs.sort();
-            for i in (0..xs.len()).step_by(2) {
-                if i + 1 < xs.len() {
-                    let start = xs[i].max(0).min(width as i32 - 1);
-                    let end = xs[i + 1].max(0).min(width as i32 - 1);
-                    if start <= end {
-                        for x in start..=end {
-                            mask[(y as u32 * width + x as u32) as usize] = 255;
-                        }
-                    }
+            if xs.len() < 2 { continue; }
+            for i in (0..xs.len() - 1).step_by(2) {
+                let x_start = xs[i].max(0);
+                let x_end = xs[i + 1].min(width as i32 - 1);
+                if x_end < x_start {
+                    continue;
+                }
+                for x in x_start..=x_end {
+                    let idx = (y as u32 * width + x as u32) as usize;
+                    mask[idx] = 255;
                 }
             }
         }
         mask
+    }
+
+}
+
+impl PolystreamRasterizer {
+    /// Draw a line using Bresenham's algorithm (clipped to mask bounds)
+    fn draw_line(mask: &mut [u8], width: i32, height: i32, mut x0: i32, mut y0: i32, x1: i32, y1: i32) {
+        let mut x1 = x1;
+        let mut y1 = y1;
+        // Clip to bounds (simple, not Liang-Barsky)
+        x0 = x0.max(0).min(width - 1);
+        y0 = y0.max(0).min(height - 1);
+        x1 = x1.max(0).min(width - 1);
+        y1 = y1.max(0).min(height - 1);
+        let dx = (x1 - x0).abs();
+        let dy = (y1 - y0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx - dy;
+        loop {
+            if x0 >= 0 && x0 < width && y0 >= 0 && y0 < height {
+                let idx = (y0 as u32 * width as u32 + x0 as u32) as usize;
+                mask[idx] = 255;
+            }
+            if x0 == x1 && y0 == y1 { break; }
+            let e2 = 2 * err;
+            if e2 > -dy { err -= dy; x0 += sx; }
+            if e2 < dx { err += dx; y0 += sy; }
+        }
     }
 }
 
