@@ -5,6 +5,9 @@
 /// followed by pairs of i8 dx, dy deltas.
 pub struct PolystreamRasterizer;
 
+const NATIVE_WIDTH: u32 = 2024;
+const NATIVE_HEIGHT: u32 = 1024;
+
 impl PolystreamRasterizer {
     /// Rasterizes a polystream into an R8 alpha mask.
     /// The polystream is parsed into vertices, edges are built, and scanline
@@ -19,6 +22,7 @@ impl PolystreamRasterizer {
     /// A Vec<u8> of size width * height, where each byte is 0 or 255.
     pub fn rasterize(polystream: &[u8], width: u32, height: u32) -> Vec<u8> {
         let points = Self::decode_polystream(polystream);
+        let points = Self::scale_points(&points, width, height);
         if points.len() < 3 {
             return vec![0; (width * height) as usize];
         }
@@ -63,6 +67,12 @@ impl PolystreamRasterizer {
             result.push(y as f32);
         }
         result
+    }
+
+    fn scale_points(points: &[(i32, i32)], target_width: u32, target_height: u32) -> Vec<(i32, i32)> {
+        let scale_x = target_width as f32 / NATIVE_WIDTH as f32;
+        let scale_y = target_height as f32 / NATIVE_HEIGHT as f32;
+        points.iter().map(|(x, y)| (*x as f32 * scale_x, *y as f32 * scale_y)).map(|(x, y)| (x as i32, y as i32)).collect()
     }
 
     /// Decodes the polystream bytes into a list of (x, y) points.

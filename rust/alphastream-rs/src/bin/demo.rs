@@ -74,8 +74,8 @@ fn main() {
     };
     let base_url_bytes = base_url.as_bytes();
 
-    let width = 2048;
-    let height = 1024;
+    let width = 512;
+    let height = 256;
 
     let builder = AlphaStreamProcessorBuilder::new()
         .processing_mode(ProcessingMode::Bitmap)
@@ -156,13 +156,13 @@ fn main() {
                     eprintln!("Frame {} has unexpected size {} (expected {})", frame_idx, frame.len(), width*height);
                     process::exit(1);
                 }
-                if frame_idx == 261 {
-                    use std::fs::File;
-                    use std::io::Write;
-                    let filename = format!("debug_mask_main_{}.raw", frame_idx);
-                    let mut file = File::create(filename).unwrap();
-                    file.write_all(&frame).unwrap();
-                }
+                // if frame_idx == 261 {
+                //     use std::fs::File;
+                //     use std::io::Write;
+                //     let filename = format!("debug_mask_main_{}.raw", frame_idx);
+                //     let mut file = File::create(filename).unwrap();
+                //     file.write_all(&frame).unwrap();
+                // }
 
                 ffmpeg_stdin.write_all(&frame).expect("Failed to write frame to ffmpeg");
                 // print avg value for debug
