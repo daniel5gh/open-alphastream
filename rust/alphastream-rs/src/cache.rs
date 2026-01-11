@@ -78,6 +78,11 @@ impl FrameCache {
         cache.pop(frame_index)
     }
 
+    pub fn remove_lru(&self) {
+        let mut cache = self.cache.write().unwrap();
+        cache.pop_lru();
+    }
+
     /// Get the current number of frames in the cache.
     pub fn len(&self) -> usize {
         let cache = self.cache.read().unwrap();

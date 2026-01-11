@@ -20,6 +20,7 @@ chacha20 = { version = "0.7", features = ["legacy"] }
 scrypt = "0.8"
 flate2 = "1.0"
 generic-array = "0.14"
+futures = "0.3"
 
 [dev-dependencies]
 criterion = "0.5"

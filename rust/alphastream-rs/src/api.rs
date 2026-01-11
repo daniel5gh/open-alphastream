@@ -4,11 +4,10 @@
 /// Allows configuration of runtime, cache, scheduler, and transport options.
 #[derive(Debug, Clone)]
 pub struct AlphaStreamProcessorBuilder {
-    runtime_threads: usize,           // Default: 8, Range: 1-64
-    connection_pool_size: usize,      // Default: 10, Range: 1-100
+    runtime_threads: usize,           // Default: 0, Range: 0-64 - if 0, uses number of logical cores
     timeout_seconds: u64,             // Default: 30, Range: 1-300
     cache_capacity: usize,            // Default: 512, Range: 1-4096
-    prefetch_window: usize,           // Default: 10, Range: 1-100
+    prefetch_window: usize,           // Default: 16, Range: 1-500
     processing_mode: ProcessingMode,  // Default: Bitmap
 }
 
@@ -23,11 +22,10 @@ pub enum BuilderProcessingType {
 impl Default for AlphaStreamProcessorBuilder {
     fn default() -> Self {
         Self {
-            runtime_threads: 8,
-            connection_pool_size: 10,
+            runtime_threads: 0,
             timeout_seconds: 30,
             cache_capacity: 512,
-            prefetch_window: 10,
+            prefetch_window: 16,
             processing_mode: ProcessingMode::Bitmap,
         }
     }
@@ -38,11 +36,7 @@ impl AlphaStreamProcessorBuilder {
         Self::default()
     }
     pub fn runtime_threads(mut self, threads: usize) -> Self {
-        self.runtime_threads = threads.clamp(1, 64);
-        self
-    }
-    pub fn connection_pool_size(mut self, size: usize) -> Self {
-        self.connection_pool_size = size.clamp(1, 100);
+        self.runtime_threads = threads.clamp(0, 64);
         self
     }
     pub fn timeout_seconds(mut self, secs: u64) -> Self {
@@ -76,10 +70,14 @@ impl AlphaStreamProcessorBuilder {
         let cache = Arc::new(FrameCache::new(self.cache_capacity));
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
-        scheduler_obj.set_max_concurrent(self.connection_pool_size);
+        scheduler_obj.set_max_concurrent(self.prefetch_window);
         scheduler_obj.set_prefetch_count(self.prefetch_window);
         let scheduler = Arc::new(Mutex::new(scheduler_obj));
-        let runtime = Runtime::with_worker_threads(self.runtime_threads).expect("Failed to create runtime");
+        let runtime = if self.runtime_threads == 0 {
+            Runtime::new().expect("Failed to create runtime")
+        } else {
+            Runtime::with_worker_threads(self.runtime_threads).expect("Failed to create runtime")
+        };
 
         let mut processor = AlphaStreamProcessor {
             cache: Arc::clone(&cache),
@@ -118,10 +116,15 @@ impl AlphaStreamProcessorBuilder {
         let cache = Arc::new(FrameCache::new(self.cache_capacity));
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
-        scheduler_obj.set_max_concurrent(self.connection_pool_size);
+        scheduler_obj.set_max_concurrent(self.prefetch_window);
         scheduler_obj.set_prefetch_count(self.prefetch_window);
         let scheduler = Arc::new(Mutex::new(scheduler_obj));
-        let runtime = Runtime::with_worker_threads(self.runtime_threads).expect("Failed to create runtime");
+        let runtime = if self.runtime_threads == 0 {
+            Runtime::new().expect("Failed to create runtime")
+        } else {
+            Runtime::with_worker_threads(self.runtime_threads).expect("Failed to create runtime")
+        };
+
 
         let mut processor = AlphaStreamProcessor {
             cache: Arc::clone(&cache),
@@ -286,8 +289,14 @@ impl AlphaStreamProcessor {
     pub async fn get_frame(&self, frame_index: usize, _width: u32, _height: u32) -> Option<Vec<u8>> {
         let requested_frame_index = frame_index;
         if let Some(frame_data) = self.cache.get(requested_frame_index) { // Check cache first
-            if frame_data.bitmap.is_some() {
-                return frame_data.bitmap.clone(); // Return cached bitmap
+            if let Some(bitmap) = frame_data.bitmap.clone() {
+                // Remove frames from cache after returning one to avoid deadlock
+                // self.cache.remove_lru();
+                let removed = self.cache.remove(&(frame_index-1));
+                if removed.is_none() {
+                    self.cache.remove(&frame_index);
+                }
+                return Some(bitmap);
             }
         }
         // Not in cache, schedule for processing
@@ -343,20 +352,10 @@ impl AlphaStreamProcessor {
 
     /// Detect sequential access and trigger prefetching if needed
     async fn maybe_trigger_prefetch(scheduler: &mut Scheduler, current_frame: usize) {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::sync::OnceLock;
-
-        // Static to track last accessed frame (per-process, not per-instance)
-        static LAST_FRAME: OnceLock<AtomicUsize> = OnceLock::new();
-        let last = LAST_FRAME.get_or_init(|| AtomicUsize::new(usize::MAX));
-        let last_frame = last.load(Ordering::Relaxed);
-
-        // Detect strictly sequential forward access
-        if last_frame != usize::MAX && current_frame == last_frame + 1 {
-            // Sequential access detected, trigger prefetch
-            scheduler.prefetch(current_frame);
-        }
-        last.store(current_frame, Ordering::Relaxed);
+        // Always trigger prefetch for the current frame
+        // println!("[alphastream] Prefetch always triggered for frame {}", current_frame);
+        scheduler.prefetch(current_frame);
+        // Optionally, you can keep the static for future use, but it's not needed anymore
     }
 
     /// Start background processing of scheduler tasks
@@ -364,84 +363,89 @@ impl AlphaStreamProcessor {
     /// It uses tokio::spawn to create a separate async task that doesn't block the main thread.
     /// The task runs in a loop, getting work from the scheduler and processing it.
     fn start_background_processing(&mut self) {
+        use futures::stream::FuturesUnordered;
+        use futures::StreamExt;
         let scheduler_clone = Arc::clone(&self.scheduler);
         let format_clone = Arc::clone(&self.format);
         let width = self.width;
         let height = self.height;
         let mode = self.mode.clone();
-
         let cache_clone = Arc::clone(&self.cache);
         let handle = self.runtime.as_ref().unwrap().spawn(async move {
+            let mut running_tasks = FuturesUnordered::new();
             loop {
-                let task = {
+                // Fill up to max_concurrent tasks
+                {
                     let mut scheduler = scheduler_clone.lock().await;
-                    scheduler.next_task()
-                };
-                if let Some(task) = task {
-                    let frame_index = task.frame_index;
-                    let format = Arc::clone(&format_clone);
-                    let width = width;
-                    let height = height;
-                    let mode = mode.clone();
-                    let cache = Arc::clone(&cache_clone);
-                    let handle = tokio::task::spawn_blocking(move || {
-                        let mut format = format.blocking_lock();
-
-                        let frame_data = match format.decode_frame(frame_index as u32) {
-                            Ok(data) => data,
-                            Err(e) => {
-                                println!("[alphastream] Error decoding frame {}: {}", frame_index, e);
-                                return;
-                            }
-                        };
-
-                        println!("[alphastream] Processing frame {}", frame_index);
-                        let (_channel_count, channel_sizes, channel_data) = AlphaStreamProcessor::parse_polystream(&frame_data.polystream);
-                        let mut bitmap = None;
-                        let mut triangle_strip = None;
-
-                        if matches!(mode, ProcessingMode::Bitmap | ProcessingMode::Both) {
-                            let mut mask = vec![0u8; (width * height) as usize];
-                            let mut offset = 0;
-                            for &size in &channel_sizes {
-                                let channel_data_slice = &channel_data[offset..offset + size as usize];
-                                let channel_mask = PolystreamRasterizer::rasterize(channel_data_slice, width, height);
-                                for (i, &pixel) in channel_mask.iter().enumerate() {
-                                    if pixel > 0 {
-                                        mask[i] = 255;
-                                    }
+                    // let num_queued_tasks = scheduler.get_number_of_queued_tasks();
+                    // let num_active_tasks = scheduler.get_number_of_active_tasks();
+                    // let num_max_concurrent = scheduler.get_number_of_max_concurrent_tasks();
+                    // println!("[alphastream debug] Background processing loop: {} queued tasks, {} active tasks, {} max concurrent", num_queued_tasks, num_active_tasks, num_max_concurrent);
+                    while let Some(task) = scheduler.next_task() {
+                        let frame_index = task.frame_index;
+                        let format = Arc::clone(&format_clone);
+                        let cache = Arc::clone(&cache_clone);
+                        let mode = mode.clone();
+                        let handle = tokio::task::spawn_blocking(move || {
+                            let mut format = format.blocking_lock();
+                            let frame_data = match format.decode_frame(frame_index as u32) {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    println!("[alphastream] Error decoding frame {}: {}", frame_index, e);
+                                    return (frame_index, false);
                                 }
-                                offset += size as usize;
+                            };
+                            let (_channel_count, channel_sizes, channel_data) = AlphaStreamProcessor::parse_polystream(&frame_data.polystream);
+                            let mut bitmap = None;
+                            let mut triangle_strip = None;
+                            if matches!(mode, ProcessingMode::Bitmap | ProcessingMode::Both) {
+                                let mut mask = vec![0u8; (width * height) as usize];
+                                let mut offset = 0;
+                                for &size in &channel_sizes {
+                                    let channel_data_slice = &channel_data[offset..offset + size as usize];
+                                    let channel_mask = PolystreamRasterizer::rasterize(channel_data_slice, width, height);
+                                    for (i, &pixel) in channel_mask.iter().enumerate() {
+                                        if pixel > 0 {
+                                            mask[i] = 255;
+                                        }
+                                    }
+                                    offset += size as usize;
+                                }
+                                bitmap = Some(mask);
                             }
-                            bitmap = Some(mask);
-                        }
-
-                        if matches!(mode, ProcessingMode::TriangleStrip | ProcessingMode::Both) {
-                            let mut vertices = Vec::new();
-                            let mut offset = 0;
-                            for &size in &channel_sizes {
-                                let channel_data_slice = &channel_data[offset..offset + size as usize];
-                                let channel_strip = PolystreamRasterizer::polystream_to_triangle_strip(channel_data_slice);
-                                vertices.extend(channel_strip);
-                                offset += size as usize;
+                            if matches!(mode, ProcessingMode::TriangleStrip | ProcessingMode::Both) {
+                                let mut vertices = Vec::new();
+                                let mut offset = 0;
+                                for &size in &channel_sizes {
+                                    let channel_data_slice = &channel_data[offset..offset + size as usize];
+                                    let channel_strip = PolystreamRasterizer::polystream_to_triangle_strip(channel_data_slice);
+                                    vertices.extend(channel_strip);
+                                    offset += size as usize;
+                                }
+                                triangle_strip = Some(vertices);
                             }
-                            triangle_strip = Some(vertices);
-                        }
-
-                        let processed_frame = FrameData {
-                            polystream: frame_data.polystream,
-                            bitmap,
-                            triangle_strip,
-                        };
-                        cache.insert(frame_index, processed_frame);
-                        println!("[alphastream] Frame {} processed, cache size: {}", frame_index, cache.len());
-                    });
-
-                    let _ = handle.await;
-
+                            let processed_frame = FrameData {
+                                polystream: frame_data.polystream,
+                                bitmap,
+                                triangle_strip,
+                            };
+                            cache.insert(frame_index, processed_frame);
+                            // let thread_id = std::thread::current().id();
+                            // println!("[alphastream debug] Frame {} processed [thread {:?}]", frame_index, thread_id);
+                            (frame_index, true)
+                        });
+                        running_tasks.push(async move {
+                            let res = handle.await;
+                            (frame_index, res.is_ok())
+                        });
+                    }
+                }
+                // Poll for completed tasks
+                if let Some((_frame_index, _ok)) = running_tasks.next().await {
                     let mut scheduler = scheduler_clone.lock().await;
                     scheduler.complete_task();
                 } else {
+                    // No running tasks, sleep briefly
                     tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
                 }
             }
@@ -494,8 +498,7 @@ mod tests {
     #[test]
     fn test_builder_defaults_and_overrides() {
         let builder = AlphaStreamProcessorBuilder::new();
-        assert_eq!(builder.runtime_threads, 8);
-        assert_eq!(builder.connection_pool_size, 10);
+        assert_eq!(builder.runtime_threads, 0);
         assert_eq!(builder.timeout_seconds, 30);
         assert_eq!(builder.cache_capacity, 512);
         assert_eq!(builder.prefetch_window, 10);
@@ -503,13 +506,11 @@ mod tests {
 
         let builder = builder
             .runtime_threads(32)
-            .connection_pool_size(50)
             .timeout_seconds(120)
             .cache_capacity(1024)
             .prefetch_window(25)
             .processing_mode(ProcessingMode::Both);
         assert_eq!(builder.runtime_threads, 32);
-        assert_eq!(builder.connection_pool_size, 50);
         assert_eq!(builder.timeout_seconds, 120);
         assert_eq!(builder.cache_capacity, 1024);
         assert_eq!(builder.prefetch_window, 25);
@@ -644,3 +645,4 @@ mod tests {
         // Test metadata on invalid processor would require mocking, but basic structure is tested above
     }
 }
+

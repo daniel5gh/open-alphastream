@@ -211,7 +211,6 @@ pub extern "C" fn CV_init(
         if let Ok(path) = CStr::from_ptr(base_url).to_str() {
             let builder = api::AlphaStreamProcessorBuilder::new()
                 .runtime_threads(8)
-                .connection_pool_size(10)
                 .timeout_seconds((init_timeout_ms / 1000).max(1) as u64)
                 .cache_capacity(l1_buffer_length as usize)
                 .prefetch_window(l1_buffer_init_length as usize)

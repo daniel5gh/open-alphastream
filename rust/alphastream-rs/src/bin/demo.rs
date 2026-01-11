@@ -72,7 +72,9 @@ fn main() {
     };
     let base_url_bytes = base_url.as_bytes();
 
-    let builder = AlphaStreamProcessorBuilder::new().processing_mode(ProcessingMode::Bitmap);
+    let builder = AlphaStreamProcessorBuilder::new()
+        .processing_mode(ProcessingMode::Bitmap)
+        .prefetch_window(1000);
     let processor = match builder.build_asvr(&asvr_path, scene_id_num, version_bytes, base_url_bytes, 512, 512) {
         Ok(p) => p,
         Err(e) => {
@@ -109,6 +111,9 @@ fn main() {
             let _ = rt.block_on(processor.request_frame(frame_idx));
             let got = rt.block_on(processor.get_frame(frame_idx as usize, 512, 512));
             if got.is_some() {
+                if frame_start.elapsed().as_millis() > 0 {
+                    println!("[debug] Frame {} decoded in {:.3} ms", frame_idx + 1, frame_start.elapsed().as_millis());
+                }
                 break;
             } else {
                 if frame_start.elapsed().as_millis() > 500 {

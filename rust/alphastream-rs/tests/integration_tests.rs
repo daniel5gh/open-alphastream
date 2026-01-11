@@ -33,6 +33,7 @@ fn test_full_processor_lifecycle() {
         let frame = processor.get_frame(0, 16, 16).await.unwrap();
         assert_eq!(frame.len(), 256); // 16x16
 
+        // now with direct cache eviction in prev call, this is not available right away
         let vertices = processor.get_triangle_strip_vertices(0).await.unwrap();
         assert_eq!(vertices.len(), 174); // Empty for this test data
 
@@ -209,6 +210,7 @@ fn test_c_abi_integration() {
     // Get triangle strip
     let mut vertices: *const f32 = std::ptr::null();
     let mut count: usize = 0;
+    // now with direct cache eviction in prev call, this is not available right away
     let success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
     assert!(success);
     assert_eq!(count, 174);

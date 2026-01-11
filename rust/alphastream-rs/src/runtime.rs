@@ -28,7 +28,10 @@ impl RuntimeBuilder {
         let mut builder = Builder::new_multi_thread();
 
         if let Some(threads) = self.worker_threads {
+            println!("Using {} worker threads", threads);
             builder.worker_threads(threads);
+        } else {
+            println!("Using default number of worker threads (number of logical cores)");
         }
 
         // Enable all features for full async support

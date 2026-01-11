@@ -72,11 +72,23 @@ impl Scheduler {
             task_queue: VecDeque::new(),
             task_sender: tx,
             task_receiver: rx,
-            max_concurrent: 4, // Default max concurrent tasks
+            max_concurrent: 16, // Default max concurrent tasks
             active_tasks: 0,
-            prefetch_count: 10, // Prefetch 10 frames ahead
+            prefetch_count: 64, // Prefetch frames ahead
             cache: None,
         }
+    }
+
+    pub fn get_number_of_queued_tasks(&self) -> usize {
+        self.task_queue.len()
+    }
+
+    pub fn get_number_of_active_tasks(&self) -> usize {
+        self.active_tasks
+    }
+
+    pub fn get_number_of_max_concurrent_tasks(&self) -> usize {
+        self.max_concurrent
     }
 
     /// Set the maximum number of concurrent tasks (for builder integration)
@@ -106,14 +118,19 @@ impl Scheduler {
         // Check if a task with the same frame_index exists
         if let Some(existing) = self.task_queue.iter_mut().find(|t| t.frame_index == task.frame_index) {
             // Update priority if the new task has higher priority
+            // println!("[alphastream debug] Updating existing task with frame index {} to priority {}", task.frame_index, task.priority);
             if task.priority > existing.priority {
                 existing.priority = task.priority;
+                // move to front of queue
+                self.task_queue.retain(|t| t.frame_index != task.frame_index);
+                self.task_queue.insert(0, task);
             }
         } else {
             // Insert task in priority order (higher priority first, then lower frame index)
             let pos = self.task_queue.iter().position(|t| {
                 t.priority < task.priority || (t.priority == task.priority && t.frame_index > task.frame_index)
             }).unwrap_or(self.task_queue.len());
+            // println!("[alphastream debug] Adding task at position: {} for frame index {} with prio {}", pos, task.frame_index, task.priority);
             self.task_queue.insert(pos, task);
         }
     }
@@ -145,6 +162,7 @@ impl Scheduler {
     /// Generate prefetch tasks for frames ahead of the current frame.
     pub fn prefetch(&mut self, current_frame: usize) {
         let mut available_slots = self.prefetch_count;
+        let mut frames_to_prefetch = vec![];
         if let Some(ref cache) = self.cache {
             let cap = cache.capacity();
             let len = cache.len();
@@ -153,14 +171,18 @@ impl Scheduler {
             } else {
                 available_slots = 0;
             }
-        }
-        for i in 1..=available_slots {
-            let frame_index = current_frame + i;
-            if !self.task_queue.iter().any(|t| t.frame_index == frame_index) {
-                let task = Task::new(frame_index);
-                self.schedule_task(task);
+            for i in 1..=available_slots {
+                let frame_index = current_frame + i;
+                if !self.task_queue.iter().any(|t| t.frame_index == frame_index) &&
+                    !cache.contains(&frame_index)
+                {
+                    let task = Task::new(frame_index);
+                    frames_to_prefetch.push(task);
+                }
             }
         }
+        // println!("[alphastream debug] Prefetching {} frames ahead of frame {}. {} are cached", available_slots, current_frame, available_slots - frames_to_prefetch.len());
+        frames_to_prefetch.iter().for_each(|task| self.schedule_task(task.clone()));
     }
 
     /// Get the sender for external task submission.
