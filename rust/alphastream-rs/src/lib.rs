@@ -49,9 +49,9 @@ pub mod testlib;
 #[repr(C)]
 pub struct AlphaStreamCHandle {
     pub processor: Option<Box<api::AlphaStreamProcessor>>,
-    pub last_frame_ptr: *mut u8,
-    pub last_vertices_ptr: *mut f32,
-    pub last_vertices_len: usize,
+    pub runtime: Option<tokio::runtime::Runtime>,
+    pub last_frame_ptr: *mut [u8],
+    pub last_vertices_ptr: *mut [f32],
     pub last_error_code: i32,
     pub last_error_text: [u8; 256],
 }
@@ -60,9 +60,9 @@ impl AlphaStreamCHandle {
     pub fn new() -> Self {
         Self {
             processor: None,
-            last_frame_ptr: std::ptr::null_mut(),
-            last_vertices_ptr: std::ptr::null_mut(),
-            last_vertices_len: 0,
+            runtime: None,
+            last_frame_ptr: unsafe { std::mem::transmute((std::ptr::null_mut::<u8>(), 0)) },
+            last_vertices_ptr: unsafe { std::mem::transmute((std::ptr::null_mut::<f32>(), 0)) },
             last_error_code: 0,
             last_error_text: [0; 256],
         }
@@ -108,7 +108,16 @@ pub extern "C" fn CV_create() -> *mut AlphaStreamCHandle {
 #[no_mangle]
 pub extern "C" fn CV_destroy(handle: *mut AlphaStreamCHandle) {
     if !handle.is_null() {
-        unsafe { drop(Box::from_raw(handle)); }
+        unsafe {
+            let chandle = &mut *handle;
+            if !chandle.last_frame_ptr.is_null() {
+                drop(Box::from_raw(chandle.last_frame_ptr));
+            }
+            if !chandle.last_vertices_ptr.is_null() {
+                drop(Box::from_raw(chandle.last_vertices_ptr));
+            }
+            drop(Box::from_raw(handle));
+        }
     }
 }
 
@@ -149,11 +158,13 @@ pub extern "C" fn CV_get_total_frames(handle: *mut AlphaStreamCHandle) -> c_uint
     unsafe {
         let chandle = &mut *handle;
         if let Some(proc) = &chandle.processor {
-            // Try to get metadata
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            match rt.block_on(async { proc.metadata().await }) {
-                Ok(meta) => meta.frame_count,
-                Err(_) => 0,
+            if let Some(rt) = &chandle.runtime {
+                match rt.block_on(async { proc.metadata().await }) {
+                    Ok(meta) => meta.frame_count as c_uint,
+                    Err(_) => 0,
+                }
+            } else {
+                0
             }
         } else {
             0
@@ -227,6 +238,8 @@ pub extern "C" fn CV_init(
                 return match builder.build_asvr(path, scene_id, version.as_bytes(), filename.as_bytes(), width, height) {
                     Ok(proc) => {
                         chandle.processor = Some(Box::new(proc));
+                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        chandle.runtime = Some(rt);
                         true
                     }
                     Err(e) => {
@@ -258,26 +271,31 @@ pub extern "C" fn CV_get_frame(handle: *mut AlphaStreamCHandle, frame_index: c_u
         let chandle = &mut *handle;
         chandle.clear_error();
         if let Some(proc) = &chandle.processor {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            return match rt.block_on(async { proc.get_frame(frame_index as usize, proc.width(), proc.height()).await }) {
-                Some(bitmap) => {
-                    if !chandle.last_frame_ptr.is_null() {
-                        let _ = Box::from_raw(chandle.last_frame_ptr);
-                        chandle.last_frame_ptr = std::ptr::null_mut();
+            if let Some(rt) = &chandle.runtime {
+                return match rt.block_on(async { proc.get_frame(frame_index as usize, proc.width(), proc.height()).await }) {
+                    Some(bitmap) => {
+                        if !chandle.last_frame_ptr.is_null() {
+                            drop(Box::from_raw(chandle.last_frame_ptr));
+                            chandle.last_frame_ptr = std::mem::transmute((std::ptr::null_mut::<u8>(), 0));
+                        }
+                        let boxed = bitmap.into_boxed_slice();
+                        let ptr = Box::into_raw(boxed);
+                        chandle.last_frame_ptr = ptr;
+                        ptr as *const c_void
                     }
-                    let boxed = bitmap.into_boxed_slice();
-                    let ptr = Box::into_raw(boxed) as *mut u8;
-                    chandle.last_frame_ptr = ptr;
-                    ptr as *const c_void
+                    None => {
+                        chandle.set_error(3, "Frame not found or not ready");
+                        ptr::null()
+                    }
                 }
-                None => {
-                    chandle.set_error(3, "Frame not found or not ready");
-                    ptr::null()
-                },
+            } else {
+                chandle.set_error(4, "Runtime not initialized");
+                ptr::null()
             }
+        } else {
+            chandle.set_error(4, "Processor not initialized");
+            ptr::null()
         }
-        chandle.set_error(4, "Processor not initialized");
-        ptr::null()
     }
 }
 
@@ -298,33 +316,36 @@ pub extern "C" fn CV_get_triangle_strip_vertices(handle: *mut AlphaStreamCHandle
         let chandle = &mut *handle;
         chandle.clear_error();
         if let Some(proc) = &chandle.processor {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            return match rt.block_on(async { proc.get_triangle_strip_vertices(frame_index as usize).await }) {
-                Some(vertices) => {
-                    if !chandle.last_vertices_ptr.is_null() {
-                        let _ = Vec::from_raw_parts(chandle.last_vertices_ptr, chandle.last_vertices_len, chandle.last_vertices_len);
-                        chandle.last_vertices_ptr = std::ptr::null_mut();
-                        chandle.last_vertices_len = 0;
+            if let Some(rt) = &chandle.runtime {
+                return match rt.block_on(async { proc.get_triangle_strip_vertices(frame_index as usize).await }) {
+                    Some(vertices) => {
+                        if !chandle.last_vertices_ptr.is_null() {
+                            drop(Box::from_raw(chandle.last_vertices_ptr));
+                            chandle.last_vertices_ptr = std::mem::transmute((std::ptr::null_mut::<f32>(), 0));
+                        }
+                        let boxed = vertices.into_boxed_slice();
+                        let len = boxed.len();
+                        let ptr = Box::into_raw(boxed);
+                        *out_vertices = ptr as *const f32;
+                        *out_count = len;
+                        chandle.last_vertices_ptr = ptr;
+                        true
                     }
-                    let boxed = vertices.into_boxed_slice();
-                    let len = boxed.len();
-                    let ptr = Box::into_raw(boxed);
-                    *out_vertices = ptr as *const f32;
-                    *out_count = len;
-                    chandle.last_vertices_ptr = ptr as *mut f32;
-                    chandle.last_vertices_len = len;
-                    true
+                    None => {
+                        *out_vertices = ptr::null();
+                        *out_count = 0;
+                        chandle.set_error(5, "Vertices not found or not ready");
+                        false
+                    }
                 }
-                None => {
-                    *out_vertices = ptr::null();
-                    *out_count = 0;
-                    chandle.set_error(5, "Vertices not found or not ready");
-                    false
-                }
+            } else {
+                chandle.set_error(4, "Runtime not initialized");
+                false
             }
+        } else {
+            chandle.set_error(4, "Processor not initialized");
+            false
         }
-        chandle.set_error(4, "Processor not initialized");
-        false
     }
 }
 
