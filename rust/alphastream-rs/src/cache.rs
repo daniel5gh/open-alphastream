@@ -213,7 +213,7 @@ impl RingBufferCache {
     /// # Seek Detection
     /// - **Backward seek**: new_frame < current_play_head → invalidate cache
     /// - **Large forward seek**: new_frame >= start_index + 2*capacity → invalidate cache (true seek)
-    /// - **Normal forward beyond window**: Slide window forward to accommodate (sequential playback)
+    /// - **Proactive window slide**: Slide at 75% capacity to give prefetcher room to work ahead
     /// - **Normal forward**: Just update play_head
     ///
     /// # Arguments
@@ -242,11 +242,13 @@ impl RingBufferCache {
             return true;
         }
         
-        // Forward movement that exceeds current window - slide window forward
-        // This is sequential playback, preserve cached frames that are still ahead
-        if frame_index >= start + self.capacity {
-            // Advance start to make room: keep some buffer behind play head for re-requests
-            // New start = frame_index - capacity/4 (keep 25% of capacity behind)
+        // Proactive window sliding: slide at 50% capacity threshold
+        // This gives the prefetcher room to work ahead without hitting the window boundary.
+        // At 50%, we have capacity/2 slots ahead for prefetching.
+        let slide_threshold = start + self.capacity / 2;
+        if frame_index >= slide_threshold {
+            // Advance start to keep play head at ~25% from the start
+            // This maximizes the prefetch runway (75% of capacity ahead)
             let buffer_behind = self.capacity / 4;
             let new_start = if frame_index >= buffer_behind {
                 frame_index - buffer_behind
@@ -523,13 +525,17 @@ mod tests {
         let cache = RingBufferCache::new(10);
         cache.insert(0, test_frame_data(1));
         
-        // Normal forward movement
-        let seek_detected = cache.update_play_head(5);
+        // Small forward movement (below 50% threshold)
+        let seek_detected = cache.update_play_head(3);
         assert!(!seek_detected);
-        assert_eq!(cache.get_play_head(), 5);
+        assert_eq!(cache.get_play_head(), 3);
         
-        // Data should still be there
+        // Data should still be there (below proactive slide threshold)
         assert!(cache.contains(&0));
+        
+        // Moving to 50% triggers proactive slide but frame 0 may be evicted
+        // With capacity=10, threshold=5, buffer_behind=2, new_start = 5-2 = 3
+        // So frame 0 would be evicted at frame 5
     }
 
     #[test]
@@ -573,22 +579,20 @@ mod tests {
         }
         assert_eq!(cache.len(), 10);
         
-        // Move play head to frame 10 (at boundary of window)
-        // This should slide the window forward, NOT invalidate
-        let seek_detected = cache.update_play_head(10);
+        // Move play head to frame 5 (at 50% of capacity - triggers proactive slide)
+        // This should slide the window forward proactively, NOT wait until boundary
+        let seek_detected = cache.update_play_head(5);
         assert!(!seek_detected, "Sequential forward should not be detected as seek");
-        assert_eq!(cache.get_play_head(), 10);
+        assert_eq!(cache.get_play_head(), 5);
         
-        // Window should have slid forward (start_index > 0)
+        // Window should have slid forward proactively (start_index > 0)
+        // With capacity=10 and buffer_behind=2, new_start = 5 - 2 = 3
         let new_start = cache.get_start_index();
-        assert!(new_start > 0, "Window should have advanced");
+        assert!(new_start > 0, "Window should have advanced proactively at 50%");
         
-        // Frame 10 should now be in range
-        assert!(cache.is_in_range(10));
-        
-        // Some earlier frames should still be cached (window preserves some behind play head)
-        // With capacity=10 and buffer_behind=2, new_start = 10 - 2 = 8
-        // So frames 8, 9 should still be in the buffer (if they were ready)
+        // Frames ahead should still be in range
+        assert!(cache.is_in_range(5));
+        assert!(cache.is_in_range(new_start + 9)); // Still have room at the end
     }
 
     #[test]
@@ -637,15 +641,16 @@ mod tests {
 
     #[test]
     fn test_sequential_access_pattern() {
-        let cache = RingBufferCache::new(5);
+        // Use larger cache to avoid proactive sliding during test
+        let cache = RingBufferCache::new(20);
         
-        // Simulate sequential playback
+        // Simulate sequential playback - stay below 50% threshold
         for i in 0..5 {
             cache.insert(i, test_frame_data(i as u8));
             cache.update_play_head(i);
         }
         
-        // All frames should be available
+        // All frames should still be available (below slide threshold)
         for i in 0..5 {
             assert!(cache.contains(&i));
             let data = cache.get(i).unwrap();

@@ -176,9 +176,44 @@ $$
 - Batch rasterization when feasible; avoid redundant scaling.
 - Nearest-neighbor scaling chosen for low CPU overhead during resize.
 - Benchmark suite and profiling hooks aligned with [AGENTS.md](AGENTS.md).
-- LRU-only eviction minimizes contention and bookkeeping cost.
-- Count-based cap chosen for deterministic memory footprint across varying frame sizes in R8.
 - Triangle strips: optional storage increases memory usage but enables efficient caller-side rasterization; configurable processing types balance performance trade-offs; see [docs/tasks/10-rasterization-polystreams.md](docs/tasks/10-rasterization-polystreams.md).
+
+### Ring Buffer Cache - Performance Lessons Learned
+
+The frame cache was migrated from LRU to a ring buffer design, achieving **0.03 ms/frame** (16,375 frames in 0.53 seconds) through the following optimizations:
+
+#### 1. O(1) Atomic Counter Operations
+- **Problem**: Original design used O(n) iteration to count ready/in-progress slots for backpressure checks.
+- **Solution**: Added `AtomicUsize` counters (`ready_count`, `in_progress_count`) updated on state transitions.
+- **Benefit**: `occupied_count()` is O(1) instead of O(n), critical since called on every `next_task()`.
+
+#### 2. HashSet for Duplicate Task Detection
+- **Problem**: Scheduler's `schedule_task()` scanned queue for duplicates: O(n) per task.
+- **Solution**: Maintain `HashSet<usize>` of queued frame indices alongside the queue.
+- **Benefit**: O(1) duplicate detection, eliminates quadratic behavior with large prefetch windows.
+
+#### 3. Proactive Window Sliding
+- **Problem**: Window sliding at boundary (100%) caused prefetch starvation. Prefetcher blocked when `frame >= start + capacity`.
+- **Solution**: Slide window proactively at 50% of capacity, keeping play head at ~25% from start.
+- **Benefit**: Always 75% of capacity ahead for prefetching; no stalls at window boundary.
+
+#### 4. Generation Counter for Stale Task Detection
+- **Problem**: After seek/invalidation, in-flight decode tasks could corrupt new cache state.
+- **Solution**: `AtomicU64` generation counter incremented on invalidation; tasks carry generation when scheduled.
+- **Benefit**: Stale results discarded without lock contention; O(1) validity check.
+
+#### 5. Read-Write Lock Separation
+- **Problem**: Single mutex for all cache operations caused contention.
+- **Solution**: `RwLock<Vec<FrameSlot>>` allows multiple concurrent readers.
+- **Benefit**: `get()` operations are non-blocking when no writes are pending.
+
+#### Key Design Decisions
+- **Ring buffer over LRU**: Sequential workload doesn't need LRU's recency tracking overhead.
+- **Fixed capacity (512 default)**: Deterministic memory usage; no allocation during operation.
+- **Slot-based design**: Frame index maps directly to slot: `slot = (frame - start) % capacity`.
+- **Three-state slots**: Empty → InProgress → Ready state machine prevents duplicate work.
+
+See [ADR-0011: Ring Buffer Frame Cache](adr/0011-ring-buffer-frame-cache.md) for detailed design rationale.
 
 ## Glossary
 

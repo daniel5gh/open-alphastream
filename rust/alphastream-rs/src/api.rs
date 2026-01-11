@@ -453,7 +453,7 @@ impl AlphaStreamProcessor {
                 }
                 // Poll for completed tasks
                 if let Some((_frame_index, _ok)) = running_tasks.next().await {
-                    let wait_start = std::time::Instant::now();
+                    // let wait_start = std::time::Instant::now();
                     let mut scheduler = scheduler_clone.lock().await;
                     scheduler.complete_task();
                     // let wait_duration = wait_start.elapsed();
