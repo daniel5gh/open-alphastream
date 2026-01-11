@@ -1,0 +1,580 @@
+//! alphastream-rs — C ABI for .NET P/Invoke compatibility
+//!
+//! This module provides a C-compatible interface that can be called from other languages like C# via P/Invoke.
+//! All functions are marked with #[no_mangle] and extern "C" to prevent name mangling and ensure C calling convention.
+//!
+//! # FFI Buffer Ownership Rules
+//!
+//! - All pointers returned by FFI functions (e.g., frame buffers, vertex arrays) are owned by the library and must not be freed by the caller.
+//! - Each call to `CV_get_frame` or `CV_get_triangle_strip_vertices` invalidates the previous buffer pointer for that handle.
+//! - The buffer remains valid until the next call to the same function or until `CV_destroy` is called.
+//! - Do not retain or free returned pointers after the handle is destroyed.
+//!
+//! # Safety, Concurrency, and FFI Usage
+//!
+//! - Each `AlphaStreamCHandle` is not thread-safe; do not share a handle between threads.
+//! - All FFI functions must be called from the same thread that created the handle.
+//! - The library is internally thread-safe for independent handles, but not for concurrent use of a single handle.
+//!
+//! - All FFI functions set an error code and message on the handle if an error occurs.
+//! - Use `CV_get_last_error_code` and `CV_get_last_error_text` to retrieve error details after any call.
+//!
+//! - Always call `CV_create` to obtain a handle, and `CV_destroy` to free it.
+//! - Do not access the internals of the handle struct from C code; treat it as opaque.
+//!
+//! - All pointers returned by FFI functions (e.g., frame buffers, vertex arrays) are owned by the library and must not be freed by the caller.
+//! - Each call to `CV_get_frame` or `CV_get_triangle_strip_vertices` invalidates the previous buffer pointer for that handle.
+//! - The buffer remains valid until the next call to the same function or until `CV_destroy` is called.
+//! - Do not retain or free returned pointers after the handle is destroyed.
+//!
+//! For C ABI consumers: always check error codes after each call, and never free or retain returned pointers beyond the handle's lifetime.
+
+use std::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void, CStr, CString};
+use std::ptr;
+
+pub mod transport;
+pub mod formats;
+pub mod runtime;
+pub mod scheduler;
+pub mod rasterizer;
+pub mod cache;
+pub mod api;
+pub mod testlib;
+
+/// Handle structure for C API
+/// This struct is passed between C functions to maintain state.
+/// It's opaque to C code - C only sees a pointer to it.
+/// Contains dimensions, error info, and the last processed frame buffer.
+/// C ABI handle struct encapsulating an optional processor
+#[repr(C)]
+pub struct AlphaStreamCHandle {
+    pub processor: Option<Box<api::AlphaStreamProcessor>>,
+    pub runtime: Option<tokio::runtime::Runtime>,
+    pub last_frame_ptr: *mut [u8],
+    pub last_vertices_ptr: *mut [f32],
+    pub last_error_code: i32,
+    pub last_error_text: [u8; 256],
+}
+
+impl AlphaStreamCHandle {
+    pub fn new() -> Self {
+        Self {
+            processor: None,
+            runtime: None,
+            last_frame_ptr: unsafe { std::mem::transmute((std::ptr::null_mut::<u8>(), 0)) },
+            last_vertices_ptr: unsafe { std::mem::transmute((std::ptr::null_mut::<f32>(), 0)) },
+            last_error_code: 0,
+            last_error_text: [0; 256],
+        }
+    }
+    pub fn set_error(&mut self, code: i32, msg: &str) {
+        self.last_error_code = code;
+        let bytes = msg.as_bytes();
+        let len = bytes.len().min(255);
+        self.last_error_text[..len].copy_from_slice(&bytes[..len]);
+        self.last_error_text[len] = 0;
+    }
+    pub fn clear_error(&mut self) {
+        self.last_error_code = 0;
+        self.last_error_text[0] = 0;
+    }
+}
+
+pub use api::{AlphaStreamProcessor, ProcessingMode};
+pub use cache::{FrameCache};
+pub use formats::{FrameData};
+pub use scheduler::{Scheduler, Task};
+// Static C strings for name/version
+static PLUGIN_NAME: &str = "alphastream-rs";
+static PLUGIN_VERSION: &str = "0.1.0";
+
+fn static_cstr(s: &str) -> *const c_char {
+    // Leak a CString to keep pointer valid for process lifetime
+    Box::leak(CString::new(s).unwrap().into_boxed_c_str()).as_ptr()
+}
+
+/// Create a new AlphaStream processor handle (FFI)
+/// Call this first to get a processor for all operations.
+/// Returns a pointer to AlphaStreamProcessor, or null if allocation fails.
+/// In C#: IntPtr handle = CV_create();
+#[no_mangle]
+pub extern "C" fn CV_create() -> *mut AlphaStreamCHandle {
+    Box::into_raw(Box::new(AlphaStreamCHandle::new()))
+}
+
+/// Destroy an AlphaStream processor and free its memory
+/// Always call this when done to prevent memory leaks.
+/// In C#: CV_destroy(handle);
+#[no_mangle]
+pub extern "C" fn CV_destroy(handle: *mut AlphaStreamCHandle) {
+    if !handle.is_null() {
+        unsafe {
+            let chandle = &mut *handle;
+            if !chandle.last_frame_ptr.is_null() {
+                drop(Box::from_raw(chandle.last_frame_ptr));
+            }
+            if !chandle.last_vertices_ptr.is_null() {
+                drop(Box::from_raw(chandle.last_vertices_ptr));
+            }
+            drop(Box::from_raw(handle));
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn CV_get_name(_handle: *mut AlphaStreamCHandle) -> *const c_char {
+    static_cstr(PLUGIN_NAME)
+}
+
+#[no_mangle]
+pub extern "C" fn CV_get_version(_handle: *mut AlphaStreamCHandle) -> *const c_char {
+    static_cstr(PLUGIN_VERSION)
+}
+
+#[no_mangle]
+pub extern "C" fn CV_get_last_error_code(handle: *mut AlphaStreamCHandle) -> c_int {
+    if handle.is_null() { return -1; }
+    unsafe { (*handle).last_error_code }
+}
+
+#[no_mangle]
+pub extern "C" fn CV_get_last_error_text(handle: *mut AlphaStreamCHandle) -> *const c_char {
+    if handle.is_null() {
+        return static_cstr("Invalid handle");
+    }
+    unsafe {
+        let err = &(*handle).last_error_text;
+        if err[0] == 0 {
+            static_cstr("OK")
+        } else {
+            err.as_ptr() as *const c_char
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn CV_get_total_frames(handle: *mut AlphaStreamCHandle) -> c_uint {
+    if handle.is_null() { return 0; }
+    unsafe {
+        let chandle = &mut *handle;
+        if let Some(proc) = &chandle.processor {
+            if let Some(rt) = &chandle.runtime {
+                match rt.block_on(async { proc.metadata().await }) {
+                    Ok(meta) => meta.frame_count as c_uint,
+                    Err(_) => 0,
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn CV_get_frame_size(handle: *mut AlphaStreamCHandle) -> c_uint {
+    if handle.is_null() { return 0; }
+    unsafe {
+        let chandle = &mut *handle;
+        if let Some(proc) = &chandle.processor {
+            (proc.width() * proc.height()) as c_uint
+        } else {
+            0
+        }
+    }
+}
+
+/// Initialize the AlphaStream processor with connection parameters
+/// This sets up the processor for AlphaStream file or server access.
+/// Parameters:
+/// - handle: The processor from CV_create()
+/// - base_url: Server URL as C string (e.g., "https://server.com") and must be an encrypted asvr file
+/// - scene_id: Numeric ID of the scene to load
+/// - width/height: Output dimensions for rendered frames
+/// - version: Protocol version string
+/// - start_frame: Which frame to start playback from
+/// - buffer lengths: Network buffering settings
+/// - timeouts: Connection and data timeouts in milliseconds
+/// Returns true on success, false on failure (check CV_get_last_error_* for details)
+/// In C#: bool success = CV_init(handle, urlPtr, sceneId, width, height, versionPtr, ...);
+#[no_mangle]
+pub extern "C" fn CV_init(
+    handle: *mut AlphaStreamCHandle,
+    base_url: *const c_char,
+    scene_id: c_uint,
+    width: c_uint,
+    height: c_uint,
+    version: *const c_char,
+    _start_frame: c_uint,
+    _l0_buffer_length: c_uint,
+    l1_buffer_length: c_uint,
+    l1_buffer_init_length: c_uint,
+    init_timeout_ms: c_uint,
+    _data_timeout_ms: c_uint,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    unsafe {
+        let chandle = &mut *handle;
+        chandle.clear_error();
+        if let Ok(path) = CStr::from_ptr(base_url).to_str() {
+            let builder = api::AlphaStreamProcessorBuilder::new()
+                .runtime_threads(8)
+                .timeout_seconds((init_timeout_ms / 1000).max(1) as u64)
+                .cache_capacity(l1_buffer_length as usize)
+                .prefetch_window(l1_buffer_init_length as usize)
+                .processing_mode(api::ProcessingMode::Both);
+
+            // extract filename only from path which can be a URL or a file path with path delimiter ('/' or '\')
+            // all chars after last path delimiter ('/' or '\') and before '?' if any
+            // first replace '\\' with '/' to normalize path format
+            let filename = path.replace('\\', "/");
+            let filename = filename.rsplit_once('/').unwrap_or((path, "")).1;
+            let filename = filename.split_once('?').unwrap_or((filename, "")).0;
+
+            if let Ok(version) = CStr::from_ptr(version).to_str() {
+                return match builder.build_asvr(path, scene_id, version.as_bytes(), filename.as_bytes(), width, height) {
+                    Ok(proc) => {
+                        chandle.processor = Some(Box::new(proc));
+                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        chandle.runtime = Some(rt);
+                        true
+                    }
+                    Err(e) => {
+                        chandle.set_error(2, &format!("Init error: {e}"));
+                        false
+                    }
+                }
+            } else {
+                chandle.set_error(1, "Invalid version");
+            }
+        } else {
+            chandle.set_error(1, "Invalid base_url");
+        }
+    }
+    false
+}
+
+/// Get a processed frame as R8 grayscale mask
+/// Requests the specified frame and returns a pointer to the pixel data.
+/// The data is width*height bytes of grayscale values (0-255).
+/// Returns null if frame is not available or error occurred.
+/// Check CV_get_last_error_code() for error details.
+/// In C#: IntPtr frameData = CV_get_frame(handle, frameIndex);
+/// Then copy the data: Marshal.Copy(frameData, buffer, 0, width * height);
+#[no_mangle]
+pub extern "C" fn CV_get_frame(handle: *mut AlphaStreamCHandle, frame_index: c_ulonglong) -> *const c_void {
+    if handle.is_null() { return ptr::null(); }
+    unsafe {
+        let chandle = &mut *handle;
+        chandle.clear_error();
+        if let Some(proc) = &chandle.processor {
+            if let Some(rt) = &chandle.runtime {
+                return match rt.block_on(async { proc.get_frame(frame_index as usize, proc.width(), proc.height()).await }) {
+                    Some(bitmap) => {
+                        if !chandle.last_frame_ptr.is_null() {
+                            drop(Box::from_raw(chandle.last_frame_ptr));
+                            chandle.last_frame_ptr = std::mem::transmute((std::ptr::null_mut::<u8>(), 0));
+                        }
+                        let boxed = bitmap.into_boxed_slice();
+                        let ptr = Box::into_raw(boxed);
+                        chandle.last_frame_ptr = ptr;
+                        ptr as *const c_void
+                    }
+                    None => {
+                        chandle.set_error(3, "Frame not found or not ready");
+                        ptr::null()
+                    }
+                }
+            } else {
+                chandle.set_error(4, "Runtime not initialized");
+                ptr::null()
+            }
+        } else {
+            chandle.set_error(4, "Processor not initialized");
+            ptr::null()
+        }
+    }
+}
+
+/// Get triangle strip vertices for 3D rendering
+/// Returns vertex data for rendering the frame as 3D geometry.
+/// Parameters:
+/// - out_vertices: Pointer to receive array of float coordinates (x,y,z,x,y,z,...)
+/// - out_count: Pointer to receive number of floats in the array
+/// Returns true on success, false on error.
+/// The vertex array contains 3D positions for triangle strip rendering.
+/// In C#: float* vertices; IntPtr count; bool success = CV_get_triangle_strip_vertices(handle, frame, &vertices, &count);
+#[no_mangle]
+pub extern "C" fn CV_get_triangle_strip_vertices(handle: *mut AlphaStreamCHandle, frame_index: c_ulonglong, out_vertices: *mut *const f32, out_count: *mut usize) -> bool {
+    if handle.is_null() || out_vertices.is_null() || out_count.is_null() {
+        return false;
+    }
+    unsafe {
+        let chandle = &mut *handle;
+        chandle.clear_error();
+        if let Some(proc) = &chandle.processor {
+            if let Some(rt) = &chandle.runtime {
+                return match rt.block_on(async { proc.get_triangle_strip_vertices(frame_index as usize).await }) {
+                    Some(vertices) => {
+                        if !chandle.last_vertices_ptr.is_null() {
+                            drop(Box::from_raw(chandle.last_vertices_ptr));
+                            chandle.last_vertices_ptr = std::mem::transmute((std::ptr::null_mut::<f32>(), 0));
+                        }
+                        let boxed = vertices.into_boxed_slice();
+                        let len = boxed.len();
+                        let ptr = Box::into_raw(boxed);
+                        *out_vertices = ptr as *const f32;
+                        *out_count = len;
+                        chandle.last_vertices_ptr = ptr;
+                        true
+                    }
+                    None => {
+                        *out_vertices = ptr::null();
+                        *out_count = 0;
+                        chandle.set_error(5, "Vertices not found or not ready");
+                        false
+                    }
+                }
+            } else {
+                chandle.set_error(4, "Runtime not initialized");
+                false
+            }
+        } else {
+            chandle.set_error(4, "Processor not initialized");
+            false
+        }
+    }
+}
+
+// Keep minimal Rust-native API for tests/demos
+/// Returns the crate semantic version string.
+pub fn version() -> &'static str { PLUGIN_VERSION }
+
+/// Simple echo function for demo/tests.
+pub fn echo(input: &str) -> String { input.to_string() }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+    use crate::testlib::{create_test_asvr};
+
+    #[test]
+    fn version_is_semver_like() { assert!(version().split('.').count() >= 3); }
+
+    #[test]
+    fn echo_roundtrip() { assert_eq!(echo("alpha"), "alpha"); }
+
+    #[test]
+    fn test_c_abi_create_destroy() {
+        let handle = CV_create();
+        assert!(!handle.is_null());
+
+        // Check initial state
+        assert_eq!(CV_get_last_error_code(handle), 0);
+        assert_eq!(CV_get_total_frames(handle), 0);
+        assert_eq!(CV_get_frame_size(handle), 0);
+
+        CV_destroy(handle);
+    }
+
+    #[test]
+    fn test_c_abi_init() {
+        let handle = CV_create();
+        assert!(!handle.is_null());
+
+        // Initialize with a real test file
+        let version = CString::new("1.0.0").unwrap();
+        let test_file = create_test_asvr(123, version.as_bytes(), 1).unwrap();
+        let test_path = test_file.path().to_str().unwrap();
+        let base_url = CString::new(test_path).unwrap();
+
+        let success = CV_init(
+            handle,
+            base_url.as_ptr(),
+            123,
+            16,
+            16,
+            version.as_ptr(),
+            0,
+            1024,
+            512,
+            256,
+            5000,
+            30000,
+        );
+
+        assert!(success);
+        assert_eq!(CV_get_last_error_code(handle), 0);
+        assert_eq!(CV_get_total_frames(handle), 1);
+        assert_eq!(CV_get_frame_size(handle), 256);
+
+        CV_destroy(handle);
+    }
+
+    #[test]
+    fn test_c_abi_get_frame() {
+        let handle = CV_create();
+
+        // Initialize with a real test file
+        let version = CString::new("1.0.0").unwrap();
+        let test_file = create_test_asvr(123, version.as_bytes(), 1).unwrap();
+        let test_path = test_file.path().to_str().unwrap();
+        let base_url = CString::new(test_path).unwrap();
+
+        let success = CV_init(
+            handle,
+            base_url.as_ptr(),
+            123,
+            16,
+            16,
+            version.as_ptr(),
+            0,
+            1024,
+            512,
+            256,
+            5000,
+            30000,
+        );
+
+        assert!(success);
+
+        // Get frame 0, trigger processing
+        let _ = CV_get_frame(handle, 0);
+        // sleep for 500ms to allow frame to be processed
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let frame_ptr = CV_get_frame(handle, 0);
+        assert!(!frame_ptr.is_null());
+        assert_eq!(CV_get_last_error_code(handle), 0);
+
+        // Check frame data
+        unsafe {
+            let frame_data = std::slice::from_raw_parts(frame_ptr as *const u8, 256);
+            assert_eq!(frame_data.len(), 256);
+            assert_eq!(frame_data[0], 0);
+        }
+
+        // Test out of range
+        let null_frame = CV_get_frame(handle, 10001); // beyond total_frames
+        assert!(null_frame.is_null());
+        // Error code should be set for not found once error reporting is implemented
+        assert_eq!(CV_get_last_error_code(handle), 3); // NotFound error
+
+        CV_destroy(handle);
+    }
+
+    #[test]
+    fn test_c_abi_triangle_strip() {
+        let handle = CV_create();
+
+        // Initialize with a real test file
+        let version = CString::new("1.0.0").unwrap();
+        let test_file = create_test_asvr(123, version.as_bytes(), 1).unwrap();
+        let test_path = test_file.path().to_str().unwrap();
+        let base_url = CString::new(test_path).unwrap();
+
+        CV_init(
+            handle,
+            base_url.as_ptr(),
+            123,
+            16,
+            16,
+            version.as_ptr(),
+            0,
+            1024,
+            512,
+            256,
+            5000,
+            30000,
+        );
+
+        // Get triangle strip (currently returns empty)
+        let mut vertices: *const f32 = std::ptr::null();
+        let mut count: usize = 0;
+
+        // get frame 0, trigger processing
+        let _ = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+        // sleep for 500ms to allow frame to be processed
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+        assert_eq!(success, true);
+        assert_eq!(count, 174);
+        assert!(!vertices.is_null());
+
+        CV_destroy(handle);
+    }
+
+    #[test]
+    fn test_c_abi_error_handling() {
+        // Test with null handle
+        assert_eq!(CV_get_last_error_code(std::ptr::null_mut()), -1);
+        assert_eq!(CV_get_total_frames(std::ptr::null_mut()), 0);
+        assert_eq!(CV_get_frame_size(std::ptr::null_mut()), 0);
+
+        let frame_ptr = CV_get_frame(std::ptr::null_mut(), 0);
+        assert!(frame_ptr.is_null());
+
+        let mut vertices: *const f32 = std::ptr::null();
+        let mut count: usize = 0;
+        let success = CV_get_triangle_strip_vertices(std::ptr::null_mut(), 0, &mut vertices, &mut count);
+        assert!(!success);
+    }
+
+    // Additional FFI error path and edge case tests
+    #[test]
+    fn test_c_abi_get_frame_uninitialized_processor() {
+        let handle = CV_create();
+        // Do not initialize
+        let frame_ptr = CV_get_frame(handle, 0);
+        assert!(frame_ptr.is_null());
+        assert_eq!(CV_get_last_error_code(handle), 4); // Processor not initialized
+        CV_destroy(handle);
+    }
+
+    #[test]
+    fn test_c_abi_triangle_strip_uninitialized_processor() {
+        let handle = CV_create();
+        // Do not initialize
+        let mut vertices: *const f32 = std::ptr::null();
+        let mut count: usize = 0;
+        let success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+        assert!(!success);
+        assert_eq!(CV_get_last_error_code(handle), 4); // Processor not initialized
+        CV_destroy(handle);
+    }
+
+    #[test]
+    fn test_c_abi_triangle_strip_out_of_range() {
+        let handle = CV_create();
+
+        // Initialize with a real test file
+        let version = CString::new("1.0.0").unwrap();
+        let test_file = create_test_asvr(123, version.as_bytes(), 1).unwrap();
+        let test_path = test_file.path().to_str().unwrap();
+        let base_url = CString::new(test_path).unwrap();
+
+        CV_init(
+            handle,
+            base_url.as_ptr(),
+            123,
+            16,
+            16,
+            version.as_ptr(),
+            0,
+            1024,
+            512,
+            256,
+            5000,
+            30000,
+        );
+        let mut vertices: *const f32 = std::ptr::null();
+        let mut count: usize = 0;
+        let success = CV_get_triangle_strip_vertices(handle, 10001, &mut vertices, &mut count);
+        assert!(!success);
+        assert_eq!(CV_get_last_error_code(handle), 5); // Vertices not found or not ready
+        CV_destroy(handle);
+    }
+}
