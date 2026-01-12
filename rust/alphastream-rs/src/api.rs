@@ -372,7 +372,7 @@ impl AlphaStreamProcessor {
     /// This non-blocking approach allows the caller to continue while processing happens in background.
     pub async fn get_frame(&self, frame_index: usize, _width: u32, _height: u32) -> Option<Vec<u8>> {
         let requested_frame_index = frame_index;
-        
+
         // Update play head position - this handles seek detection and cache invalidation
         // The ring buffer automatically handles eviction, no manual removal needed
         self.cache.update_play_head(requested_frame_index);
@@ -399,7 +399,7 @@ impl AlphaStreamProcessor {
     pub async fn get_triangle_strip_vertices(&self, frame_index: usize) -> Option<Vec<f32>> {
         // Update play head position for seek detection
         self.cache.update_play_head(frame_index);
-        
+
         if let Some(frame_data) = self.cache.get(frame_index) { // Cache check
             if frame_data.triangle_strip.is_some() {
                 return frame_data.triangle_strip.clone(); // Return cached vertices
