@@ -57,13 +57,17 @@ pub struct FrameData {
     pub triangle_strip: Option<Vec<f32>>,
 }
 
+pub type MetadataFuture = Pin<Box<dyn Future<Output = Result<Metadata, FormatError>> + Send + 'static>>;
+pub type FrameDataFuture<'a> = Pin<Box<dyn Future<Output = Result<FrameData, FormatError>> + Send + 'a>>;
+pub type FrameCountFuture = Pin<Box<dyn Future<Output = Result<u32, FormatError>>>>;
+
 /// The ASFormat trait defines the interface for parsing AlphaStream formats
 pub trait ASFormat {
     /// Get metadata about the file (frame count, etc.)
-    fn metadata(&mut self) -> Pin<Box<dyn Future<Output = Result<Metadata, FormatError>> + Send + 'static>>;
+    fn metadata(&mut self) -> MetadataFuture;
 
     /// Get the total number of frames
-    fn frame_count(&mut self) -> Pin<Box<dyn Future<Output = Result<u32, FormatError>>>> {
+    fn frame_count(&mut self) -> FrameCountFuture {
         let fut = self.metadata();
         Box::pin(async move {
             fut.await.map(|m| m.frame_count)
@@ -71,7 +75,7 @@ pub trait ASFormat {
     }
 
     /// Decode a specific frame into polystream data
-    fn decode_frame(&mut self, frame_index: u32) -> Pin<Box<dyn Future<Output = Result<FrameData, FormatError>> + Send + '_>>;
+    fn decode_frame(&mut self, frame_index: u32) -> FrameDataFuture<'_>;
 }
 
 /// Enum to hold either ASVR or ASVP format
@@ -81,14 +85,14 @@ pub enum FormatType<R: AsyncRead + AsyncSeek + Unpin + Send> {
 }
 
 impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASFormat for FormatType<R> {
-    fn metadata(&mut self) -> Pin<Box<dyn Future<Output = Result<Metadata, FormatError>> + Send + 'static>> {
+    fn metadata(&mut self) -> MetadataFuture {
         match self {
             FormatType::ASVR(f) => f.metadata(),
             FormatType::ASVP(f) => f.metadata(),
         }
     }
 
-    fn decode_frame(&mut self, frame_index: u32) -> Pin<Box<dyn Future<Output = Result<FrameData, FormatError>> + Send + '_>> {
+    fn decode_frame(&mut self, frame_index: u32) -> FrameDataFuture<'_> {
         match self {
             FormatType::ASVR(f) => f.decode_frame(frame_index),
             FormatType::ASVP(f) => f.decode_frame(frame_index),
@@ -406,12 +410,12 @@ impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASVRFormat<R> {
 }
 
 impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASFormat for ASVRFormat<R> {
-    fn metadata(&mut self) -> Pin<Box<dyn Future<Output = Result<Metadata, FormatError>> + Send + 'static>> {
+    fn metadata(&mut self) -> MetadataFuture {
         let metadata = self.metadata.clone();
         Box::pin(async move { metadata.ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string())) })
     }
 
-    fn decode_frame(&mut self, frame_index: u32) -> Pin<Box<dyn Future<Output = Result<FrameData, FormatError>> + Send + '_>> {
+    fn decode_frame(&mut self, frame_index: u32) -> FrameDataFuture<'_> {
         let frame_index = frame_index;
         let key = self.key;
         let frame_offsets = self.frame_offsets.clone();
@@ -548,12 +552,12 @@ impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASVPFormat<R> {
 }
 
 impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASFormat for ASVPFormat<R> {
-    fn metadata(&mut self) -> Pin<Box<dyn Future<Output = Result<Metadata, FormatError>> + Send + 'static>> {
+    fn metadata(&mut self) -> MetadataFuture {
         let metadata = self.metadata.clone();
         Box::pin(async move { metadata.ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string())) })
     }
 
-    fn decode_frame(&mut self, frame_index: u32) -> Pin<Box<dyn Future<Output = Result<FrameData, FormatError>> + Send + '_>> {
+    fn decode_frame(&mut self, frame_index: u32) -> FrameDataFuture<'_> {
         let frame_index = frame_index;
         let frame_offsets = self.frame_offsets.clone();
         let frame_sizes = self.frame_sizes.clone();
