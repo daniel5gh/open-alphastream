@@ -9,19 +9,32 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ctrlc = "3"
-tokio = { version = "1", features = ["full"] }
-# note 0.13 depends on aws-lc-rs, which on windows needs cmake and nasm
-reqwest = { version = "0.12.28", features = ["json"] }
+# Async runtime (enabled only needed features for smaller binary and faster compile, might need less still)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "time"] }
+
+# HTTP client
+reqwest = { version = "0.12.28" }
+
+# Async utilities
+futures = "0.3"
 bytes = "1"
+
+# Error handling
 thiserror = "2.0"
+
+# File and memory mapping
 memmap2 = "0.9"
 tempfile = "3"
-chacha20 = { version = "0.9.1" }
+
+# Cryptography
+chacha20 = "0.9.1"
 scrypt = "0.11"
+
+# Compression
 flate2 = "1.0"
-generic-array = "1.3"
-futures = "0.3"
+
+# Used in demo bin
+ctrlc = "3"
 
 [dev-dependencies]
 criterion = "0.8"
