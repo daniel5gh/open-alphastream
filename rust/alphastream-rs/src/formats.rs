@@ -7,14 +7,14 @@
 use std::io::{Read, Seek, Write};
 use flate2::read::ZlibDecoder;
 use chacha20::ChaCha20Legacy as ChaCha20;
-use chacha20::cipher::{NewCipher, StreamCipher};
+use chacha20::cipher::{KeyIvInit, StreamCipher};
 use scrypt::Params;
 use thiserror::Error;
-use generic_array::GenericArray;
+use chacha20::cipher::generic_array::GenericArray;
 
 /// Scrypt parameters matching the binary
 fn scrypt_params() -> Params {
-    Params::new(14, 8, 1).unwrap() // N=16384, r=8, p=1
+    Params::new(14, 8, 1, 32).unwrap() // N=16384, r=8, p=1, dkLen=32
 }
 
 /// Errors that can occur during format parsing or decoding
@@ -97,7 +97,7 @@ fn decrypt_frame_data(data: &[u8], key: &[u8; 32], key_id: u32) -> Result<Vec<u8
 
     let key_ga = GenericArray::from_slice(key);
     let nonce_ga = GenericArray::from_slice(&nonce);
-    let mut cipher = ChaCha20::new(key_ga, nonce_ga);
+    let mut cipher = ChaCha20::new(&key_ga, &nonce_ga);
     let mut decrypted = data.to_vec();
     cipher.apply_keystream(&mut decrypted);
     Ok(decrypted)
@@ -130,7 +130,7 @@ fn encrypt_frame_data(data: &[u8], key: &[u8; 32], key_id: u32) -> Result<Vec<u8
 
     let key_ga = GenericArray::from_slice(key);
     let nonce_ga = GenericArray::from_slice(&nonce);
-    let mut cipher = ChaCha20::new(key_ga, nonce_ga);
+    let mut cipher = ChaCha20::new(&key_ga, &nonce_ga);
     let mut encrypted = data.to_vec();
     cipher.apply_keystream(&mut encrypted);
     Ok(encrypted)

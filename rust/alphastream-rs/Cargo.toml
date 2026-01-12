@@ -9,21 +9,35 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ctrlc = "3"
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.11", features = ["json"] }
-bytes = "1"
-thiserror = "1"
-memmap2 = "0.5"
-tempfile = "3"
-chacha20 = { version = "0.7", features = ["legacy"] }
-scrypt = "0.8"
-flate2 = "1.0"
-generic-array = "0.14"
+# Async runtime (enabled only needed features for smaller binary and faster compile, might need less still)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "time"] }
+
+# HTTP client
+reqwest = { version = "0.12.28" }
+
+# Async utilities
 futures = "0.3"
+bytes = "1"
+
+# Error handling
+thiserror = "2.0"
+
+# File and memory mapping
+memmap2 = "0.9"
+tempfile = "3"
+
+# Cryptography
+chacha20 = "0.9.1"
+scrypt = "0.11"
+
+# Compression
+flate2 = "1.0"
+
+# Used in demo bin
+ctrlc = "3"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 proptest = "1"
 
 [[bench]]
