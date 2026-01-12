@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use libalphastream::cache::{FrameCache, FrameData};
 
 fn bench_cache_operations(c: &mut Criterion) {
@@ -12,7 +12,7 @@ fn bench_cache_operations(c: &mut Criterion) {
         let cache = FrameCache::new(1000);
         let mut key = 0;
         b.iter(|| {
-            cache.insert(black_box(key), black_box(data.clone()));
+            cache.insert(std::hint::black_box(key), std::hint::black_box(data.clone()));
             key += 1;
         })
     });
@@ -24,7 +24,7 @@ fn bench_cache_operations(c: &mut Criterion) {
         }
         let mut key = 0;
         b.iter(|| {
-            let _ = cache.get(black_box(key % 1000));
+            let _ = cache.get(std::hint::black_box(key % 1000));
             key += 1;
         })
     });
@@ -36,7 +36,7 @@ fn bench_cache_operations(c: &mut Criterion) {
         }
         let mut key = 1000;
         b.iter(|| {
-            let _ = cache.get(black_box(key));
+            let _ = cache.get(std::hint::black_box(key));
             key += 1;
         })
     });
@@ -48,7 +48,7 @@ fn bench_cache_operations(c: &mut Criterion) {
         }
         let mut key = 0;
         b.iter(|| {
-            let _ = cache.contains(&black_box(key % 1000));
+            let _ = cache.contains(&std::hint::black_box(key % 1000));
             key += 1;
         })
     });
@@ -59,7 +59,7 @@ fn bench_scheduler_operations(c: &mut Criterion) {
 
     c.bench_function("scheduler_schedule_task", |b| {
         b.iter(|| {
-            let task = libalphastream::scheduler::Task::new(black_box(100));
+            let task = libalphastream::scheduler::Task::new(std::hint::black_box(100));
             scheduler.schedule_task(task);
         })
     });
