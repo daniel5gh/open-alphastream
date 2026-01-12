@@ -4,18 +4,18 @@
 //! AlphaStream vector resource files. It provides methods to access metadata, frame counts,
 //! and decode individual frames into polystream data for rasterization.
 
+use chacha20::cipher::generic_array::GenericArray;
+use chacha20::cipher::{KeyIvInit, StreamCipher};
+use chacha20::ChaCha20Legacy as ChaCha20;
+use flate2::read::ZlibDecoder;
+use scrypt::Params;
 use std::future::Future;
 use std::io::{Read, Write};
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::io::{AsyncRead, AsyncSeek, AsyncReadExt, AsyncSeekExt};
-use flate2::read::ZlibDecoder;
-use chacha20::ChaCha20Legacy as ChaCha20;
-use chacha20::cipher::{KeyIvInit, StreamCipher};
-use scrypt::Params;
 use thiserror::Error;
-use chacha20::cipher::generic_array::GenericArray;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
+use tokio::sync::Mutex;
 
 /// Scrypt parameters matching the binary
 fn scrypt_params() -> Params {
@@ -27,8 +27,6 @@ fn scrypt_params() -> Params {
 pub enum FormatError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Transport error: {0}")]
-    Transport(#[from] crate::transport::TransportError),
     #[error("Zlib decompression error")]
     Zlib,
     #[error("Invalid format: {0}")]
@@ -149,7 +147,7 @@ fn decompress_zlib(data: &[u8]) -> Result<Vec<u8>, FormatError> {
 
 /// Compress data using zlib
 fn compress_zlib(data: &[u8]) -> Result<Vec<u8>, FormatError> {
-    use flate2::{Compression, write::ZlibEncoder};
+    use flate2::{write::ZlibEncoder, Compression};
     use std::io::Write;
 
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
