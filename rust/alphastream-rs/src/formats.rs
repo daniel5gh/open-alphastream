@@ -4,7 +4,8 @@
 //! AlphaStream vector resource files. It provides methods to access metadata, frame counts,
 //! and decode individual frames into polystream data for rasterization.
 
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Write};
+use tokio::io::{AsyncRead, AsyncSeek, AsyncReadExt, AsyncSeekExt};
 use flate2::read::ZlibDecoder;
 use chacha20::ChaCha20Legacy as ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher};
@@ -53,15 +54,37 @@ pub struct FrameData {
 /// The ASFormat trait defines the interface for parsing AlphaStream formats
 pub trait ASFormat {
     /// Get metadata about the file (frame count, etc.)
-    fn metadata(&mut self) -> Result<Metadata, FormatError>;
+    async fn metadata(&mut self) -> Result<Metadata, FormatError>;
 
     /// Get the total number of frames
-    fn frame_count(&mut self) -> Result<u32, FormatError> {
-        self.metadata().map(|m| m.frame_count)
+    async fn frame_count(&mut self) -> Result<u32, FormatError> {
+        self.metadata().await.map(|m| m.frame_count)
     }
 
     /// Decode a specific frame into polystream data
-    fn decode_frame(&mut self, frame_index: u32) -> Result<FrameData, FormatError>;
+    async fn decode_frame(&mut self, frame_index: u32) -> Result<FrameData, FormatError>;
+}
+
+/// Enum to hold either ASVR or ASVP format
+pub enum FormatType<R: tokio::io::AsyncRead + tokio::io::AsyncSeek + Unpin> {
+    ASVR(ASVRFormat<R>),
+    ASVP(ASVPFormat<R>),
+}
+
+impl<R: AsyncRead + AsyncSeek + Unpin> ASFormat for FormatType<R> {
+    async fn metadata(&mut self) -> Result<Metadata, FormatError> {
+        match self {
+            FormatType::ASVR(f) => f.metadata().await,
+            FormatType::ASVP(f) => f.metadata().await,
+        }
+    }
+
+    async fn decode_frame(&mut self, frame_index: u32) -> Result<FrameData, FormatError> {
+        match self {
+            FormatType::ASVR(f) => f.decode_frame(frame_index).await,
+            FormatType::ASVP(f) => f.decode_frame(frame_index).await,
+        }
+    }
 }
 
 /// Constant passphrase extracted from the binary (32 bytes)
@@ -294,7 +317,7 @@ impl<W: Write> ASVRWriter<W> {
 }
 
 /// ASVR (encrypted) format implementation
-pub struct ASVRFormat<R: Read + Seek> {
+pub struct ASVRFormat<R: AsyncRead + AsyncSeek + Unpin> {
     reader: R,
     key: [u8; 32],
     metadata: Option<Metadata>,
@@ -302,14 +325,14 @@ pub struct ASVRFormat<R: Read + Seek> {
     frame_sizes: Vec<u64>,
 }
 
-impl<R: Read + Seek> ASVRFormat<R> {
+impl<R: AsyncRead + AsyncSeek + Unpin> ASVRFormat<R> {
     /// Create a new ASVR format parser
-    pub fn new(mut reader: R, scene_id: u32, version: &[u8], base_url: &[u8]) -> Result<Self, FormatError> {
+    pub async fn new(mut reader: R, scene_id: u32, version: &[u8], base_url: &[u8]) -> Result<Self, FormatError> {
         let key = derive_key(scene_id, version, base_url)?;
 
         // Read encrypted header (16 bytes)
         let mut encrypted_header = [0u8; 16];
-        reader.read_exact(&mut encrypted_header)?;
+        reader.read_exact(&mut encrypted_header).await?;
 
         // Decrypt header to get compressed_sizes_size (preserves keystream for sizes)
         let header = decrypt_frame_data(&encrypted_header, &key, 0xFFFFFFFF)?;
@@ -324,7 +347,7 @@ impl<R: Read + Seek> ASVRFormat<R> {
 
         // Read encrypted sizes
         let mut encrypted_sizes = vec![0u8; compressed_sizes_size as usize];
-        reader.read_exact(&mut encrypted_sizes)?;
+        reader.read_exact(&mut encrypted_sizes).await?;
 
         // Decrypt header + sizes together (maintains keystream continuity with writer)
         let mut combined = encrypted_header.to_vec();
@@ -365,22 +388,22 @@ impl<R: Read + Seek> ASVRFormat<R> {
     }
 }
 
-impl<R: Read + Seek> ASFormat for ASVRFormat<R> {
-    fn metadata(&mut self) -> Result<Metadata, FormatError> {
+impl<R: AsyncRead + AsyncSeek + Unpin> ASFormat for ASVRFormat<R> {
+    async fn metadata(&mut self) -> Result<Metadata, FormatError> {
         self.metadata.clone().ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string()))
     }
 
-    fn decode_frame(&mut self, mut frame_index: u32) -> Result<FrameData, FormatError> {
+    async fn decode_frame(&mut self, mut frame_index: u32) -> Result<FrameData, FormatError> {
         if frame_index >= self.frame_sizes.len() as u32 {
             // clamp to max frame index
             frame_index = self.frame_sizes.len() as u32 - 1;
         }
 
         // Seek to frame offset
-        self.reader.seek(std::io::SeekFrom::Start(self.frame_offsets[frame_index as usize]))?;
+        self.reader.seek(std::io::SeekFrom::Start(self.frame_offsets[frame_index as usize])).await?;
         let frame_size = self.frame_sizes[frame_index as usize] as usize;
         let mut encrypted_frame = vec![0u8; frame_size];
-        self.reader.read_exact(&mut encrypted_frame)?;
+        self.reader.read_exact(&mut encrypted_frame).await?;
 
         // Decrypt frame with key_id = frame_index
         let decrypted_frame = decrypt_frame_data(&encrypted_frame, &self.key, frame_index)?;
@@ -434,19 +457,19 @@ impl<R: Read + Seek> ASFormat for ASVRFormat<R> {
 }
 
 /// ASVP (plaintext) format implementation
-pub struct ASVPFormat<R: Read + Seek> {
+pub struct ASVPFormat<R: AsyncRead + AsyncSeek + Unpin> {
     reader: R,
     metadata: Option<Metadata>,
     frame_offsets: Vec<u64>,
     frame_sizes: Vec<u64>,
 }
 
-impl<R: Read + Seek> ASVPFormat<R> {
+impl<R: AsyncRead + AsyncSeek + Unpin> ASVPFormat<R> {
     /// Create a new ASVP format parser
-    pub fn new(mut reader: R) -> Result<Self, FormatError> {
+    pub async fn new(mut reader: R) -> Result<Self, FormatError> {
         // Read header (16 bytes)
         let mut header = [0u8; 16];
-        reader.read_exact(&mut header)?;
+        reader.read_exact(&mut header).await?;
         // expected 8 bytes for decrypted asvp is b"ASVPPLN1"
         // print if this is not the case
         if &header[0..8] != b"ASVPPLN1" {
@@ -456,7 +479,7 @@ impl<R: Read + Seek> ASVPFormat<R> {
 
         // Read and decompress sizes table
         let mut compressed_sizes = vec![0u8; compressed_sizes_size as usize];
-        reader.read_exact(&mut compressed_sizes)?;
+        reader.read_exact(&mut compressed_sizes).await?;
         let sizes_raw = decompress_zlib(&compressed_sizes)?;
 
         if sizes_raw.len() % 8 != 0 {
@@ -489,22 +512,22 @@ impl<R: Read + Seek> ASVPFormat<R> {
     }
 }
 
-impl<R: Read + Seek> ASFormat for ASVPFormat<R> {
-    fn metadata(&mut self) -> Result<Metadata, FormatError> {
+impl<R: AsyncRead + AsyncSeek + Unpin> ASFormat for ASVPFormat<R> {
+    async fn metadata(&mut self) -> Result<Metadata, FormatError> {
         self.metadata.clone().ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string()))
     }
 
-    fn decode_frame(&mut self, mut frame_index: u32) -> Result<FrameData, FormatError> {
+    async fn decode_frame(&mut self, mut frame_index: u32) -> Result<FrameData, FormatError> {
         if frame_index >= self.frame_sizes.len() as u32 {
             // clamp to max frame index
             frame_index = self.frame_sizes.len() as u32 - 1;
         }
 
         // Seek to frame offset
-        self.reader.seek(std::io::SeekFrom::Start(self.frame_offsets[frame_index as usize]))?;
+        self.reader.seek(std::io::SeekFrom::Start(self.frame_offsets[frame_index as usize])).await?;
         let frame_size = self.frame_sizes[frame_index as usize] as usize;
         let mut frame_data = vec![0u8; frame_size];
-        self.reader.read_exact(&mut frame_data)?;
+        self.reader.read_exact(&mut frame_data).await?;
 
         // Parse frame: first 4 bytes = expected_uncompressed_len
         if frame_data.len() < 4 {
@@ -645,9 +668,8 @@ mod tests {
         payload
     }
 
-    #[test]
-    fn test_asvp_writer_roundtrip() {
-        use std::io::Cursor;
+    #[tokio::test]
+    async fn test_asvp_writer_roundtrip() {
         
         // Create some test frames with proper channel format
         let frames = vec![
@@ -671,24 +693,24 @@ mod tests {
         let written = writer.write_all().unwrap();
         
         // Read back with ASVPFormat
-        let cursor = Cursor::new(written);
-        let mut format_reader = ASVPFormat::new(cursor).unwrap();
+        let cursor = std::io::Cursor::new(written);
+        let mut format_reader = ASVPFormat::new(cursor).await.unwrap();
         
-        assert_eq!(format_reader.frame_count().unwrap(), 2);
+        assert_eq!(format_reader.frame_count().await.unwrap(), 2);
 
         // polystream is header + all channel data
         let expected_data_0 = &[1, 0, 0, 0, 4, 0, 0, 0, 0x01, 0x02, 0x03, 0x04];
         let expected_data_1 = &[1, 0, 0, 0, 6, 0, 0, 0, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
         
-        let decoded_frame_0 = format_reader.decode_frame(0).unwrap();
-        let decoded_frame_1 = format_reader.decode_frame(1).unwrap();
+        let decoded_frame_0 = format_reader.decode_frame(0).await.unwrap();
+        let decoded_frame_1 = format_reader.decode_frame(1).await.unwrap();
         
         assert_eq!(decoded_frame_0.polystream, expected_data_0);
         assert_eq!(decoded_frame_1.polystream, expected_data_1);
     }
 
-    #[test]
-    fn test_asvr_writer_roundtrip() {
+    #[tokio::test]
+    async fn test_asvr_writer_roundtrip() {
         use std::io::Cursor;
         
         let scene_id = 85342;
@@ -731,9 +753,9 @@ mod tests {
         
         // Read back with ASVRFormat and verify frame data
         let cursor = Cursor::new(written);
-        let mut format_reader = ASVRFormat::new(cursor, scene_id, version, base_url).expect("Failed to create ASVRFormat");
+        let mut format_reader = ASVRFormat::new(cursor, scene_id, version, base_url).await.expect("Failed to create ASVRFormat");
         
-        let frame_count = format_reader.frame_count().unwrap();
+        let frame_count = format_reader.frame_count().await.unwrap();
         assert_eq!(frame_count, 3);
         
         // polystream is header + all channel data
@@ -741,9 +763,9 @@ mod tests {
         let expected_data_1 = &[1, 0, 0, 0, 6, 0, 0, 0, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
         let expected_data_2 = &[1, 0, 0, 0, 5, 0, 0, 0, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F];
         
-        let decoded_frame_0 = format_reader.decode_frame(0).unwrap();
-        let decoded_frame_1 = format_reader.decode_frame(1).unwrap();
-        let decoded_frame_2 = format_reader.decode_frame(2).unwrap();
+        let decoded_frame_0 = format_reader.decode_frame(0).await.unwrap();
+        let decoded_frame_1 = format_reader.decode_frame(1).await.unwrap();
+        let decoded_frame_2 = format_reader.decode_frame(2).await.unwrap();
         
         assert_eq!(decoded_frame_0.polystream, expected_data_0);
         assert_eq!(decoded_frame_1.polystream, expected_data_1);
@@ -770,8 +792,8 @@ mod tests {
         assert_eq!(decrypted, data);
     }
 
-    #[test]
-    fn test_asvp_writer_empty() {
+    #[tokio::test]
+    async fn test_asvp_writer_empty() {
         use std::io::Cursor;
         
         // Test writing empty frames list
@@ -780,9 +802,9 @@ mod tests {
         
         // Read back - should have 0 frames
         let cursor = Cursor::new(written);
-        let mut format_reader = ASVPFormat::new(cursor).unwrap();
-        
-        assert_eq!(format_reader.frame_count().unwrap(), 0);
+        let mut format_reader = ASVPFormat::new(cursor).await.unwrap();
+
+        assert_eq!(format_reader.frame_count().await.unwrap(), 0);
     }
 
     #[test]
@@ -798,39 +820,38 @@ mod tests {
         // Just verify it doesn't panic during write
     }
 
-    #[test]
-    fn test_asvr_reader_with_real_file() {
+    #[tokio::test]
+    async fn test_asvr_reader_with_real_file() {
         // Test reading a real ASVR file to verify reader works correctly
         // Uses the same test file as test_decrypt_frame_1111
         let test_file_path = "../../test_data/85342/pov_mask.asvr";
-        use std::fs::File;
-        
-        let file = match File::open(test_file_path) {
+
+        let file = match tokio::fs::File::open(test_file_path).await {
             Ok(f) => f,
             Err(_) => {
                 // Skip test if file doesn't exist (CI environments may not have test data)
                 return;
             }
         };
-        
+
         let scene_id = 85342;
         let version = b"1.5.0";
         let base_url = b"pov_mask.asvr";
-        
-        let mut reader = std::io::BufReader::new(file);
-        let mut format_reader = ASVRFormat::new(&mut reader, scene_id, version, base_url)
+
+        let mut reader = tokio::io::BufReader::new(file);
+        let mut format_reader = ASVRFormat::new(&mut reader, scene_id, version, base_url).await
             .expect("Failed to create ASVRFormat from real file");
         
-        let frame_count = format_reader.frame_count().expect("Failed to get frame count");
+        let frame_count = format_reader.frame_count().await.expect("Failed to get frame count");
         assert!(frame_count > 0, "Real file should have at least one frame");
         
         // Try to decode frame 0 and frame 1111 (the hardcoded test case)
-        let frame_0 = format_reader.decode_frame(0).expect("Failed to decode frame 0");
+        let frame_0 = format_reader.decode_frame(0).await.expect("Failed to decode frame 0");
         assert!(!frame_0.polystream.is_empty(), "Frame 0 should not data");
 
         assert_eq!(frame_count, 16375, "Real file should have at 16375 frames");
         // Frame 1111 is a known test vector
-        let frame_1111 = format_reader.decode_frame(1111).expect("Failed to decode frame 1111");
+        let frame_1111 = format_reader.decode_frame(1111).await.expect("Failed to decode frame 1111");
         assert!(!frame_1111.polystream.is_empty(), "Frame 1111 should have data");
     }
 }

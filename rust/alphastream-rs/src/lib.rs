@@ -235,10 +235,10 @@ pub extern "C" fn CV_init(
             let filename = filename.split_once('?').unwrap_or((filename, "")).0;
 
             if let Ok(version) = CStr::from_ptr(version).to_str() {
-                return match builder.build_asvr(path, scene_id, version.as_bytes(), filename.as_bytes(), width, height) {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                return match rt.block_on(async { builder.build_asvr(path, scene_id, version.as_bytes(), filename.as_bytes(), width, height).await }) {
                     Ok(proc) => {
                         chandle.processor = Some(Box::new(proc));
-                        let rt = tokio::runtime::Runtime::new().unwrap();
                         chandle.runtime = Some(rt);
                         true
                     }

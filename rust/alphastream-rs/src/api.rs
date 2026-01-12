@@ -56,17 +56,22 @@ impl AlphaStreamProcessorBuilder {
         self
     }
     /// Build an AlphaStreamProcessor with the configured options for ASVP (plaintext) files
-    pub fn build_asvp(self, file_path: &str, width: u32, height: u32) -> Result<AlphaStreamProcessor, FormatError> {
+    pub async fn build_asvp(self, uri: &str, width: u32, height: u32) -> Result<AlphaStreamProcessor, FormatError> {
         use crate::formats::ASVPFormat;
         use crate::cache::FrameCache;
         use crate::scheduler::Scheduler;
         use crate::runtime::Runtime;
-        use std::fs::File;
         use std::sync::Arc;
         use tokio::sync::Mutex;
 
-        let file = File::open(file_path)?;
-        let format = Arc::new(Mutex::new(Box::new(ASVPFormat::new(file)?) as Box<dyn ASFormat + Send + Sync>));
+        let reader = if uri.starts_with("http") {
+            let bytes = reqwest::get(uri).await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?;
+            ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
+        } else {
+            ReaderWrapper::File(tokio::fs::File::open(uri).await?)
+        };
+        let format_inner = ASVPFormat::new(reader).await?;
+        let format = Arc::new(Mutex::new(FormatType::ASVP(format_inner)));
         let cache = Arc::new(FrameCache::new(self.cache_capacity));
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
@@ -94,9 +99,9 @@ impl AlphaStreamProcessorBuilder {
     }
 
     /// Build an AlphaStreamProcessor with the configured options for ASVR (encrypted) files
-    pub fn build_asvr(
+    pub async fn build_asvr(
         self,
-        file_path: &str,
+        uri: &str,
         scene_id: u32,
         version: &[u8],
         base_url: &[u8],
@@ -107,12 +112,17 @@ impl AlphaStreamProcessorBuilder {
         use crate::cache::FrameCache;
         use crate::scheduler::Scheduler;
         use crate::runtime::Runtime;
-        use std::fs::File;
         use std::sync::Arc;
         use tokio::sync::Mutex;
 
-        let file = File::open(file_path)?;
-        let format = Arc::new(Mutex::new(Box::new(ASVRFormat::new(file, scene_id, version, base_url)?) as Box<dyn ASFormat + Send + Sync>));
+        let reader = if uri.starts_with("http") {
+            let bytes = reqwest::get(uri).await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?;
+            ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
+        } else {
+            ReaderWrapper::File(tokio::fs::File::open(uri).await?)
+        };
+        let format_inner = ASVRFormat::new(reader, scene_id, version, base_url).await?;
+        let format = Arc::new(Mutex::new(FormatType::ASVR(format_inner)));
         let cache = Arc::new(FrameCache::new(self.cache_capacity));
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
@@ -148,15 +158,77 @@ impl AlphaStreamProcessorBuilder {
 // It handles opening files, processing frames asynchronously (meaning tasks can run in the background
 // without blocking the main program), and provides methods to get processed frames.
 
-use std::fs::File;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::cache::{FrameCache, FrameData};
-use crate::formats::{ASFormat, ASVRFormat, ASVPFormat, FormatError};
+use crate::formats::{ASFormat, ASVRFormat, ASVPFormat, FormatError, FormatType};
 use crate::rasterizer::PolystreamRasterizer;
 use crate::runtime::Runtime;
 use crate::scheduler::{Scheduler, Task};
+
+/// Wrapper for Cursor to avoid conflicts
+pub struct CursorWrapper(std::io::Cursor<bytes::Bytes>);
+
+impl tokio::io::AsyncRead for CursorWrapper {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncSeek for CursorWrapper {
+    fn start_seek(self: std::pin::Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
+        std::pin::Pin::new(&mut self.get_mut().0).start_seek(position)
+    }
+
+    fn poll_complete(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<u64>> {
+        std::pin::Pin::new(&mut self.get_mut().0).poll_complete(cx)
+    }
+}
+
+impl Unpin for CursorWrapper {}
+
+/// Wrapper for different reader types to unify AsyncRead + AsyncSeek
+pub enum ReaderWrapper {
+    File(tokio::fs::File),
+    Cursor(CursorWrapper),
+}
+
+impl tokio::io::AsyncRead for ReaderWrapper {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            ReaderWrapper::File(f) => std::pin::Pin::new(f).poll_read(cx, buf),
+            ReaderWrapper::Cursor(c) => std::pin::Pin::new(c).poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncSeek for ReaderWrapper {
+    fn start_seek(self: std::pin::Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
+        match self.get_mut() {
+            ReaderWrapper::File(f) => std::pin::Pin::new(f).start_seek(position),
+            ReaderWrapper::Cursor(c) => std::pin::Pin::new(c).start_seek(position),
+        }
+    }
+
+    fn poll_complete(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<u64>> {
+        match self.get_mut() {
+            ReaderWrapper::File(f) => std::pin::Pin::new(f).poll_complete(cx),
+            ReaderWrapper::Cursor(c) => std::pin::Pin::new(c).poll_complete(cx),
+        }
+    }
+}
+
+impl Unpin for ReaderWrapper {}
+
 
 /// Processing mode for rasterization
 /// This enum tells the system what kind of output to generate from the raw polystream data.
@@ -181,7 +253,7 @@ pub struct AlphaStreamProcessor {
     /// Task scheduler for frame processing - decides which frames to work on and when
     scheduler: Arc<Mutex<Scheduler>>,
     /// Format parser (either ASVR or ASVP) - handles reading and decrypting/parsing the file format
-    format: Arc<Mutex<Box<dyn ASFormat + Send + Sync>>>,
+    format: Arc<Mutex<FormatType<ReaderWrapper>>>,
     /// Output dimensions - width and height of the generated bitmaps/triangle strips
     width: u32,
     height: u32,
@@ -204,8 +276,8 @@ impl AlphaStreamProcessor {
     /// Returns a Result: Ok(processor) if successful, Err(error) if something went wrong.
     /// Error handling: The ? operator propagates errors up, so if file opening or format creation fails,
     /// the method returns early with that error.
-    pub fn new_asvr(
-        file_path: &str,
+    pub async fn new_asvr(
+        uri: &str,
         scene_id: u32,
         version: &[u8],
         base_url: &[u8],
@@ -213,8 +285,14 @@ impl AlphaStreamProcessor {
         height: u32,
         mode: ProcessingMode,
     ) -> Result<Self, FormatError> {
-        let file = File::open(file_path)?; // Open file, return error if fails
-        let format = Arc::new(Mutex::new(Box::new(ASVRFormat::new(file, scene_id, version, base_url)?) as Box<dyn ASFormat + Send + Sync>));
+        let reader = if uri.starts_with("http") {
+            let bytes = reqwest::get(uri).await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?;
+            ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
+        } else {
+            ReaderWrapper::File(tokio::fs::File::open(uri).await?)
+        };
+        let format_inner = ASVRFormat::new(reader, scene_id, version, base_url).await?;
+        let format = Arc::new(Mutex::new(FormatType::ASVR(format_inner)));
         let cache = Arc::new(FrameCache::default());
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
@@ -236,9 +314,15 @@ impl AlphaStreamProcessor {
     }
 
     /// Create a new processor for ASVP (plaintext) files
-    pub fn new_asvp(file_path: &str, width: u32, height: u32, mode: ProcessingMode) -> Result<Self, FormatError> {  
-        let file = File::open(file_path)?;
-        let format = Arc::new(Mutex::new(Box::new(ASVPFormat::new(file)?) as Box<dyn ASFormat + Send + Sync>));
+    pub async fn new_asvp(uri: &str, width: u32, height: u32, mode: ProcessingMode) -> Result<Self, FormatError> {
+        let reader = if uri.starts_with("http") {
+            let bytes = reqwest::get(uri).await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?;
+            ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
+        } else {
+            ReaderWrapper::File(tokio::fs::File::open(uri).await?)
+        };
+        let format_inner = ASVPFormat::new(reader).await?;
+        let format = Arc::new(Mutex::new(FormatType::ASVP(format_inner)));
         let cache = Arc::new(FrameCache::default());
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
@@ -266,7 +350,7 @@ impl AlphaStreamProcessor {
     /// Returns metadata like frame count, dimensions, etc., or an error if reading fails.
     pub async fn metadata(&self) -> Result<crate::formats::Metadata, FormatError> {
         let mut format = self.format.lock().await; // Lock the shared format, await means wait for access
-        format.metadata() // Call the underlying format's metadata method
+        format.metadata().await // Call the underlying format's metadata method
     }
 
     fn parse_polystream(polystream: &[u8]) -> (u32, Vec<u32>, &[u8]) {
@@ -391,9 +475,9 @@ impl AlphaStreamProcessor {
                         let mode = mode.clone();
                         // Capture generation when task is scheduled for stale task detection
                         let task_generation = cache.generation();
-                        let handle = tokio::task::spawn_blocking(move || {
-                            let mut format = format.blocking_lock();
-                            let frame_data = match format.decode_frame(frame_index as u32) {
+                        let handle = tokio::spawn(async move {
+                            let mut format = format.lock().await;
+                            let frame_data = match format.decode_frame(frame_index as u32).await {
                                 Ok(data) => data,
                                 Err(e) => {
                                     println!("[alphastream] Error decoding frame {}: {}", frame_index, e);
@@ -540,7 +624,7 @@ mod tests {
             .cache_capacity(16)
             .prefetch_window(2)
             .processing_mode(ProcessingMode::Both);
-        let processor = builder.build_asvp(test_file.path().to_str().unwrap(), 16, 16).unwrap();
+        let processor = builder.build_asvp(test_file.path().to_str().unwrap(), 16, 16).await.unwrap();
         let metadata = processor.metadata().await.unwrap();
         assert_eq!(metadata.frame_count, 1);
         let _ = processor.get_frame(0, 16, 16).await;
@@ -583,7 +667,7 @@ mod tests {
             16,
             16,
             ProcessingMode::Both,
-        ).unwrap();
+        ).await.unwrap();
 
         let metadata = processor.metadata().await.unwrap();
         assert_eq!(metadata.frame_count, 1);
@@ -608,7 +692,7 @@ mod tests {
             16,
             16,
             ProcessingMode::Bitmap,
-        ).unwrap();
+        ).await.unwrap();
 
         // Request a frame
         processor.request_frame(0).await.unwrap();
@@ -632,7 +716,7 @@ mod tests {
             16,
             16,
             ProcessingMode::Bitmap,
-        ).unwrap();
+        ).await.unwrap();
 
         // Manually insert frame data to test modes
         let frame_data = crate::formats::FrameData {
@@ -654,7 +738,7 @@ mod tests {
     #[tokio::test]
     async fn test_error_handling() {
         // Test with non-existent file
-        let result = AlphaStreamProcessor::new_asvp("nonexistent.asvp", 16, 16, ProcessingMode::Bitmap);
+        let result = AlphaStreamProcessor::new_asvp("nonexistent.asvp", 16, 16, ProcessingMode::Bitmap).await;
         assert!(result.is_err());
 
         // Test metadata on invalid processor would require mocking, but basic structure is tested above
