@@ -4,13 +4,18 @@
 //! AlphaStream vector resource files. It provides methods to access metadata, frame counts,
 //! and decode individual frames into polystream data for rasterization.
 
-use std::io::{Read, Seek, Write};
-use flate2::read::ZlibDecoder;
-use chacha20::ChaCha20Legacy as ChaCha20;
-use chacha20::cipher::{KeyIvInit, StreamCipher};
-use scrypt::Params;
-use thiserror::Error;
 use chacha20::cipher::generic_array::GenericArray;
+use chacha20::cipher::{KeyIvInit, StreamCipher};
+use chacha20::ChaCha20Legacy as ChaCha20;
+use flate2::read::ZlibDecoder;
+use scrypt::Params;
+use std::future::Future;
+use std::io::{Read, Write};
+use std::pin::Pin;
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
+use tokio::sync::Mutex;
 
 /// Scrypt parameters matching the binary
 fn scrypt_params() -> Params {
@@ -50,18 +55,47 @@ pub struct FrameData {
     pub triangle_strip: Option<Vec<f32>>,
 }
 
+pub type MetadataFuture = Pin<Box<dyn Future<Output = Result<Metadata, FormatError>> + Send + 'static>>;
+pub type FrameDataFuture<'a> = Pin<Box<dyn Future<Output = Result<FrameData, FormatError>> + Send + 'a>>;
+pub type FrameCountFuture = Pin<Box<dyn Future<Output = Result<u32, FormatError>>>>;
+
 /// The ASFormat trait defines the interface for parsing AlphaStream formats
 pub trait ASFormat {
     /// Get metadata about the file (frame count, etc.)
-    fn metadata(&mut self) -> Result<Metadata, FormatError>;
+    fn metadata(&mut self) -> MetadataFuture;
 
     /// Get the total number of frames
-    fn frame_count(&mut self) -> Result<u32, FormatError> {
-        self.metadata().map(|m| m.frame_count)
+    fn frame_count(&mut self) -> FrameCountFuture {
+        let fut = self.metadata();
+        Box::pin(async move {
+            fut.await.map(|m| m.frame_count)
+        })
     }
 
     /// Decode a specific frame into polystream data
-    fn decode_frame(&mut self, frame_index: u32) -> Result<FrameData, FormatError>;
+    fn decode_frame(&mut self, frame_index: u32) -> FrameDataFuture<'_>;
+}
+
+/// Enum to hold either ASVR or ASVP format
+pub enum FormatType<R: AsyncRead + AsyncSeek + Unpin + Send> {
+    ASVR(ASVRFormat<R>),
+    ASVP(ASVPFormat<R>),
+}
+
+impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASFormat for FormatType<R> {
+    fn metadata(&mut self) -> MetadataFuture {
+        match self {
+            FormatType::ASVR(f) => f.metadata(),
+            FormatType::ASVP(f) => f.metadata(),
+        }
+    }
+
+    fn decode_frame(&mut self, frame_index: u32) -> FrameDataFuture<'_> {
+        match self {
+            FormatType::ASVR(f) => f.decode_frame(frame_index),
+            FormatType::ASVP(f) => f.decode_frame(frame_index),
+        }
+    }
 }
 
 /// Constant passphrase extracted from the binary (32 bytes)
@@ -113,9 +147,9 @@ fn decompress_zlib(data: &[u8]) -> Result<Vec<u8>, FormatError> {
 
 /// Compress data using zlib
 fn compress_zlib(data: &[u8]) -> Result<Vec<u8>, FormatError> {
-    use flate2::{Compression, write::ZlibEncoder};
+    use flate2::{write::ZlibEncoder, Compression};
     use std::io::Write;
-    
+
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(data).map_err(|_| FormatError::Zlib)?;
     encoder.finish().map_err(|_| FormatError::Zlib)
@@ -148,17 +182,17 @@ impl<W: Write> ASVPWriter<W> {
     pub fn new(writer: W) -> Self {
         Self { writer, frames: Vec::new() }
     }
-    
+
     /// Add a frame to be written
     pub fn add_frame(&mut self, frame: FrameData) {
         self.frames.push(frame);
     }
-    
+
     /// Consume the writer and return the inner writer
     pub fn into_inner(self) -> W {
         self.writer
     }
-    
+
     /// Write all collected frames to the file
     /// This writes the header first (with sizes table), then all frames
     /// Returns the inner writer after writing
@@ -166,7 +200,7 @@ impl<W: Write> ASVPWriter<W> {
         // Pre-compress all frames to determine sizes
         let mut frame_sizes = Vec::with_capacity(self.frames.len());
         let mut compressed_frames = Vec::with_capacity(self.frames.len());
-        
+
         for frame in &self.frames {
             // The 4-byte length prefix is the EXPECTED uncompressed length, not compressed length
             let uncompressed_len = frame.polystream.len() as u32;
@@ -178,13 +212,13 @@ impl<W: Write> ASVPWriter<W> {
             frame_sizes.push(frame_data.len() as u64);
             compressed_frames.push(frame_data);
         }
-        
+
         // Write header with sizes table
         let sizes_bytes: Vec<u8> = frame_sizes.iter()
             .flat_map(|s| s.to_le_bytes())
             .collect();
         let compressed_sizes = compress_zlib(&sizes_bytes)?;
-        
+
         // Write 16-byte header
         let mut header = [0u8; 16];
         // we put "ASVPPLN1" as the first 8 bytes of the header, to make it easy to identify plaintext files
@@ -192,12 +226,12 @@ impl<W: Write> ASVPWriter<W> {
         header[12..16].copy_from_slice(&(compressed_sizes.len() as u32).to_le_bytes());
         self.writer.write_all(&header)?;
         self.writer.write_all(&compressed_sizes)?;
-        
+
         // Write each frame
         for frame_data in &compressed_frames {
             self.writer.write_all(frame_data)?;
         }
-        
+
         Ok(self.writer)
     }
 }
@@ -221,24 +255,24 @@ impl<W: Write> ASVRWriter<W> {
             key,
         })
     }
-    
+
     /// Add a frame to be written
     pub fn add_frame(&mut self, frame: FrameData) {
         self.frames.push(frame);
     }
-    
+
     /// Consume the writer and return the inner writer
     pub fn into_inner(self) -> W {
         self.writer
     }
-    
+
     /// Write all collected frames to the encrypted file
     /// Returns the inner writer after writing
     pub fn write_all(mut self) -> Result<W, FormatError> {
         // Pre-compress and encrypt all frames
         let mut frame_sizes = Vec::with_capacity(self.frames.len());
         let mut encrypted_frames = Vec::with_capacity(self.frames.len());
-        
+
         for (i, frame) in self.frames.iter().enumerate() {
             // a "polystream" is the uncompressed channel data, prefixed with the header
             // keeping this code commented for when we'll have multiple separate channels on a FrameData
@@ -265,13 +299,13 @@ impl<W: Write> ASVRWriter<W> {
             frame_sizes.push(encrypted.len() as u64);
             encrypted_frames.push(encrypted);
         }
-        
+
         // Build sizes table
         let sizes_bytes: Vec<u8> = frame_sizes.iter()
             .flat_map(|s| s.to_le_bytes())
             .collect();
         let compressed_sizes = compress_zlib(&sizes_bytes)?;
-        
+
         // Encrypt header + sizes together (maintains keystream continuity)
         let mut header = [0u8; 16];
         // first 8 bytes of an official asvr at version 1.5.0 is: 04 00 00 00 00 00 00 00
@@ -281,35 +315,40 @@ impl<W: Write> ASVRWriter<W> {
         to_encrypt.extend_from_slice(&header);
         to_encrypt.extend_from_slice(&compressed_sizes);
         let encrypted_all = encrypt_frame_data(&to_encrypt, &self.key, 0xFFFFFFFF)?;
-        
+
         self.writer.write_all(&encrypted_all)?;
-        
+
         // Write each encrypted frame
         for encrypted in &encrypted_frames {
             self.writer.write_all(encrypted)?;
         }
-        
+
         Ok(self.writer)
     }
 }
 
 /// ASVR (encrypted) format implementation
-pub struct ASVRFormat<R: Read + Seek> {
-    reader: R,
+pub struct ASVRFormat<R: AsyncRead + AsyncSeek + Unpin + Send> {
+    reader: Arc<Mutex<R>>,
     key: [u8; 32],
     metadata: Option<Metadata>,
     frame_offsets: Vec<u64>,
     frame_sizes: Vec<u64>,
 }
 
-impl<R: Read + Seek> ASVRFormat<R> {
+impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASVRFormat<R> {
     /// Create a new ASVR format parser
-    pub fn new(mut reader: R, scene_id: u32, version: &[u8], base_url: &[u8]) -> Result<Self, FormatError> {
+    pub async fn new(reader: R, scene_id: u32, version: &[u8], base_url: &[u8]) -> Result<Self, FormatError> {
         let key = derive_key(scene_id, version, base_url)?;
+
+        let reader = Arc::new(Mutex::new(reader));
 
         // Read encrypted header (16 bytes)
         let mut encrypted_header = [0u8; 16];
-        reader.read_exact(&mut encrypted_header)?;
+        {
+            let mut reader_guard = reader.lock().await;
+            reader_guard.read_exact(&mut encrypted_header).await?;
+        }
 
         // Decrypt header to get compressed_sizes_size (preserves keystream for sizes)
         let header = decrypt_frame_data(&encrypted_header, &key, 0xFFFFFFFF)?;
@@ -324,7 +363,10 @@ impl<R: Read + Seek> ASVRFormat<R> {
 
         // Read encrypted sizes
         let mut encrypted_sizes = vec![0u8; compressed_sizes_size as usize];
-        reader.read_exact(&mut encrypted_sizes)?;
+        {
+            let mut reader_guard = reader.lock().await;
+            reader_guard.read_exact(&mut encrypted_sizes).await?;
+        }
 
         // Decrypt header + sizes together (maintains keystream continuity with writer)
         let mut combined = encrypted_header.to_vec();
@@ -365,88 +407,103 @@ impl<R: Read + Seek> ASVRFormat<R> {
     }
 }
 
-impl<R: Read + Seek> ASFormat for ASVRFormat<R> {
-    fn metadata(&mut self) -> Result<Metadata, FormatError> {
-        self.metadata.clone().ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string()))
+impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASFormat for ASVRFormat<R> {
+    fn metadata(&mut self) -> MetadataFuture {
+        let metadata = self.metadata.clone();
+        Box::pin(async move { metadata.ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string())) })
     }
 
-    fn decode_frame(&mut self, mut frame_index: u32) -> Result<FrameData, FormatError> {
-        if frame_index >= self.frame_sizes.len() as u32 {
-            // clamp to max frame index
-            frame_index = self.frame_sizes.len() as u32 - 1;
-        }
+    fn decode_frame(&mut self, frame_index: u32) -> FrameDataFuture<'_> {
+        let frame_index = frame_index;
+        let key = self.key;
+        let frame_offsets = self.frame_offsets.clone();
+        let frame_sizes = self.frame_sizes.clone();
+        let reader = self.reader.clone();
+        Box::pin(async move {
+            let mut frame_index = frame_index;
+            if frame_index >= frame_sizes.len() as u32 {
+                // clamp to max frame index
+                frame_index = frame_sizes.len() as u32 - 1;
+            }
 
-        // Seek to frame offset
-        self.reader.seek(std::io::SeekFrom::Start(self.frame_offsets[frame_index as usize]))?;
-        let frame_size = self.frame_sizes[frame_index as usize] as usize;
-        let mut encrypted_frame = vec![0u8; frame_size];
-        self.reader.read_exact(&mut encrypted_frame)?;
+            let mut reader = reader.lock().await;
+            // Seek to frame offset
+            reader.seek(std::io::SeekFrom::Start(frame_offsets[frame_index as usize])).await?;
+            let frame_size = frame_sizes[frame_index as usize] as usize;
+            let mut encrypted_frame = vec![0u8; frame_size];
+            reader.read_exact(&mut encrypted_frame).await?;
 
-        // Decrypt frame with key_id = frame_index
-        let decrypted_frame = decrypt_frame_data(&encrypted_frame, &self.key, frame_index)?;
+            // Decrypt frame with key_id = frame_index
+            let decrypted_frame = decrypt_frame_data(&encrypted_frame, &key, frame_index)?;
 
-        // Parse decrypted frame: first 4 bytes = expected_uncompressed_len
-        if decrypted_frame.len() < 4 {
-            return Err(FormatError::InvalidFormat("Frame too short".to_string()));
-        }
-        let expected_len = u32::from_le_bytes(decrypted_frame[0..4].try_into().unwrap()) as usize;
-        let compressed_payload = &decrypted_frame[4..];
+            // Parse decrypted frame: first 4 bytes = expected_uncompressed_len
+            if decrypted_frame.len() < 4 {
+                return Err(FormatError::InvalidFormat("Frame too short".to_string()));
+            }
+            let expected_len = u32::from_le_bytes(decrypted_frame[0..4].try_into().unwrap()) as usize;
+            let compressed_payload = &decrypted_frame[4..];
 
-        // Decompress payload
-        let decompressed = decompress_zlib(compressed_payload)?;
-        if decompressed.len() != expected_len {
-            return Err(FormatError::InvalidFormat("Decompressed length mismatch".to_string()));
-        }
+            // Decompress payload
+            let decompressed = decompress_zlib(compressed_payload)?;
+            if decompressed.len() != expected_len {
+                return Err(FormatError::InvalidFormat("Decompressed length mismatch".to_string()));
+            }
 
-        // Parse decompressed payload
-        if decompressed.len() < 4 {
-            return Err(FormatError::InvalidFormat("Decompressed payload too short".to_string()));
-        }
-        let channel_count = u32::from_le_bytes(decompressed[0..4].try_into().unwrap());
-        let header_size = 4 + (channel_count as usize) * 4;
-        if decompressed.len() < header_size {
-            return Err(FormatError::InvalidFormat("Payload header incomplete".to_string()));
-        }
+            // Parse decompressed payload
+            if decompressed.len() < 4 {
+                return Err(FormatError::InvalidFormat("Decompressed payload too short".to_string()));
+            }
+            let channel_count = u32::from_le_bytes(decompressed[0..4].try_into().unwrap());
+            let header_size = 4 + (channel_count as usize) * 4;
+            if decompressed.len() < header_size {
+                return Err(FormatError::InvalidFormat("Payload header incomplete".to_string()));
+            }
 
-        let mut channel_sizes = Vec::new();
-        for i in 0..channel_count as usize {
-            let offset = 4 + i * 4;
-            let size = u32::from_le_bytes(decompressed[offset..offset+4].try_into().unwrap());
-            channel_sizes.push(size);
-        }
+            let mut channel_sizes = Vec::new();
+            for i in 0..channel_count as usize {
+                let offset = 4 + i * 4;
+                let size = u32::from_le_bytes(decompressed[offset..offset+4].try_into().unwrap());
+                channel_sizes.push(size);
+            }
 
-        let channel_data = decompressed[header_size..].to_vec();
+            let channel_data = decompressed[header_size..].to_vec();
 
-        // Verify sizes sum matches data length
-        let total_sizes: u32 = channel_sizes.iter().sum();
-        if total_sizes as usize != channel_data.len() {
-            return Err(FormatError::InvalidFormat("Channel sizes don't match data length".to_string()));
-        }
+            // Verify sizes sum matches data length
+            let total_sizes: u32 = channel_sizes.iter().sum();
+            if total_sizes as usize != channel_data.len() {
+                return Err(FormatError::InvalidFormat("Channel sizes don't match data length".to_string()));
+            }
 
 
-        Ok(FrameData {
-            // polystream includes all channels and the header
-            polystream: decompressed,
-            bitmap: None,
-            triangle_strip: None,
+            Ok(FrameData {
+                // polystream includes all channels and the header
+                polystream: decompressed,
+                bitmap: None,
+                triangle_strip: None,
+            })
         })
     }
 }
 
 /// ASVP (plaintext) format implementation
-pub struct ASVPFormat<R: Read + Seek> {
-    reader: R,
+pub struct ASVPFormat<R: AsyncRead + AsyncSeek + Unpin + Send> {
+    reader: Arc<Mutex<R>>,
     metadata: Option<Metadata>,
     frame_offsets: Vec<u64>,
     frame_sizes: Vec<u64>,
 }
 
-impl<R: Read + Seek> ASVPFormat<R> {
+impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASVPFormat<R> {
     /// Create a new ASVP format parser
-    pub fn new(mut reader: R) -> Result<Self, FormatError> {
+    pub async fn new(reader: R) -> Result<Self, FormatError> {
+        let reader = Arc::new(Mutex::new(reader));
+
         // Read header (16 bytes)
         let mut header = [0u8; 16];
-        reader.read_exact(&mut header)?;
+        {
+            let mut reader_guard = reader.lock().await;
+            reader_guard.read_exact(&mut header).await?;
+        }
         // expected 8 bytes for decrypted asvp is b"ASVPPLN1"
         // print if this is not the case
         if &header[0..8] != b"ASVPPLN1" {
@@ -456,7 +513,10 @@ impl<R: Read + Seek> ASVPFormat<R> {
 
         // Read and decompress sizes table
         let mut compressed_sizes = vec![0u8; compressed_sizes_size as usize];
-        reader.read_exact(&mut compressed_sizes)?;
+        {
+            let mut reader_guard = reader.lock().await;
+            reader_guard.read_exact(&mut compressed_sizes).await?;
+        }
         let sizes_raw = decompress_zlib(&compressed_sizes)?;
 
         if sizes_raw.len() % 8 != 0 {
@@ -489,65 +549,74 @@ impl<R: Read + Seek> ASVPFormat<R> {
     }
 }
 
-impl<R: Read + Seek> ASFormat for ASVPFormat<R> {
-    fn metadata(&mut self) -> Result<Metadata, FormatError> {
-        self.metadata.clone().ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string()))
+impl<R: AsyncRead + AsyncSeek + Unpin + Send> ASFormat for ASVPFormat<R> {
+    fn metadata(&mut self) -> MetadataFuture {
+        let metadata = self.metadata.clone();
+        Box::pin(async move { metadata.ok_or_else(|| FormatError::InvalidFormat("Metadata not loaded".to_string())) })
     }
 
-    fn decode_frame(&mut self, mut frame_index: u32) -> Result<FrameData, FormatError> {
-        if frame_index >= self.frame_sizes.len() as u32 {
-            // clamp to max frame index
-            frame_index = self.frame_sizes.len() as u32 - 1;
-        }
+    fn decode_frame(&mut self, frame_index: u32) -> FrameDataFuture<'_> {
+        let frame_index = frame_index;
+        let frame_offsets = self.frame_offsets.clone();
+        let frame_sizes = self.frame_sizes.clone();
+        let reader = self.reader.clone();
+        Box::pin(async move {
+            let mut frame_index = frame_index;
+            if frame_index >= frame_sizes.len() as u32 {
+                // clamp to max frame index
+                frame_index = frame_sizes.len() as u32 - 1;
+            }
 
-        // Seek to frame offset
-        self.reader.seek(std::io::SeekFrom::Start(self.frame_offsets[frame_index as usize]))?;
-        let frame_size = self.frame_sizes[frame_index as usize] as usize;
-        let mut frame_data = vec![0u8; frame_size];
-        self.reader.read_exact(&mut frame_data)?;
+            let mut reader = reader.lock().await;
+            // Seek to frame offset
+            reader.seek(std::io::SeekFrom::Start(frame_offsets[frame_index as usize])).await?;
+            let frame_size = frame_sizes[frame_index as usize] as usize;
+            let mut frame_data = vec![0u8; frame_size];
+            reader.read_exact(&mut frame_data).await?;
 
-        // Parse frame: first 4 bytes = expected_uncompressed_len
-        if frame_data.len() < 4 {
-            return Err(FormatError::InvalidFormat("Frame too short".to_string()));
-        }
-        let expected_len = u32::from_le_bytes(frame_data[0..4].try_into().unwrap()) as usize;
-        let compressed_payload = &frame_data[4..];
+            // Parse frame: first 4 bytes = expected_uncompressed_len
+            if frame_data.len() < 4 {
+                return Err(FormatError::InvalidFormat("Frame too short".to_string()));
+            }
+            let expected_len = u32::from_le_bytes(frame_data[0..4].try_into().unwrap()) as usize;
+            let compressed_payload = &frame_data[4..];
 
-        // Decompress payload
-        let decompressed = decompress_zlib(compressed_payload)?;
-        if decompressed.len() != expected_len {
-            return Err(FormatError::InvalidFormat("Decompressed length mismatch".to_string()));
-        }
+            // Decompress payload
+            let decompressed = decompress_zlib(compressed_payload)?;
+            if decompressed.len() != expected_len {
+                return Err(FormatError::InvalidFormat("Decompressed length mismatch".to_string()));
+            }
 
-        // Parse decompressed payload (same as ASVR)
-        if decompressed.len() < 4 {
-            return Err(FormatError::InvalidFormat("Decompressed payload too short".to_string()));
-        }
-        let channel_count = u32::from_le_bytes(decompressed[0..4].try_into().unwrap());
-        let header_size = 4 + (channel_count as usize) * 4;
-        if decompressed.len() < header_size {
-            return Err(FormatError::InvalidFormat("Payload header incomplete".to_string()));
-        }
+            // Parse decompressed payload (same as ASVR)
+            if decompressed.len() < 4 {
+                return Err(FormatError::InvalidFormat("Decompressed payload too short".to_string()));
+            }
+            let channel_count = u32::from_le_bytes(decompressed[0..4].try_into().unwrap());
+            let header_size = 4 + (channel_count as usize) * 4;
+            if decompressed.len() < header_size {
+                return Err(FormatError::InvalidFormat("Payload header incomplete".to_string()));
+            }
 
-        let mut channel_sizes = Vec::new();
-        for i in 0..channel_count as usize {
-            let offset = 4 + i * 4;
-            let size = u32::from_le_bytes(decompressed[offset..offset+4].try_into().unwrap());
-            channel_sizes.push(size);
-        }
+            let mut channel_sizes = Vec::new();
+            for i in 0..channel_count as usize {
+                let offset = 4 + i * 4;
+                let size = u32::from_le_bytes(decompressed[offset..offset+4].try_into().unwrap());
+                channel_sizes.push(size);
+            }
 
-        let channel_data = decompressed[header_size..].to_vec();
+            let channel_data = decompressed[header_size..].to_vec();
 
-        // Verify sizes sum matches data length
-        let total_sizes: u32 = channel_sizes.iter().sum();
-        if total_sizes as usize != channel_data.len() {
-            return Err(FormatError::InvalidFormat("Channel sizes don't match data length".to_string()));
-        }
+            // Verify sizes sum matches data length
+            let total_sizes: u32 = channel_sizes.iter().sum();
+            if total_sizes as usize != channel_data.len() {
+                return Err(FormatError::InvalidFormat("Channel sizes don't match data length".to_string()));
+            }
 
-        Ok(FrameData {
-            polystream: decompressed,
-            bitmap: None,
-            triangle_strip: None,
+            Ok(FrameData {
+                polystream: decompressed,
+                bitmap: None,
+                triangle_strip: None,
+            })
         })
     }
 }
@@ -645,9 +714,8 @@ mod tests {
         payload
     }
 
-    #[test]
-    fn test_asvp_writer_roundtrip() {
-        use std::io::Cursor;
+    #[tokio::test]
+    async fn test_asvp_writer_roundtrip() {
         
         // Create some test frames with proper channel format
         let frames = vec![
@@ -671,24 +739,24 @@ mod tests {
         let written = writer.write_all().unwrap();
         
         // Read back with ASVPFormat
-        let cursor = Cursor::new(written);
-        let mut format_reader = ASVPFormat::new(cursor).unwrap();
+        let cursor = std::io::Cursor::new(written);
+        let mut format_reader = ASVPFormat::new(cursor).await.unwrap();
         
-        assert_eq!(format_reader.frame_count().unwrap(), 2);
+        assert_eq!(format_reader.frame_count().await.unwrap(), 2);
 
         // polystream is header + all channel data
         let expected_data_0 = &[1, 0, 0, 0, 4, 0, 0, 0, 0x01, 0x02, 0x03, 0x04];
         let expected_data_1 = &[1, 0, 0, 0, 6, 0, 0, 0, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
         
-        let decoded_frame_0 = format_reader.decode_frame(0).unwrap();
-        let decoded_frame_1 = format_reader.decode_frame(1).unwrap();
+        let decoded_frame_0 = format_reader.decode_frame(0).await.unwrap();
+        let decoded_frame_1 = format_reader.decode_frame(1).await.unwrap();
         
         assert_eq!(decoded_frame_0.polystream, expected_data_0);
         assert_eq!(decoded_frame_1.polystream, expected_data_1);
     }
 
-    #[test]
-    fn test_asvr_writer_roundtrip() {
+    #[tokio::test]
+    async fn test_asvr_writer_roundtrip() {
         use std::io::Cursor;
         
         let scene_id = 85342;
@@ -731,9 +799,9 @@ mod tests {
         
         // Read back with ASVRFormat and verify frame data
         let cursor = Cursor::new(written);
-        let mut format_reader = ASVRFormat::new(cursor, scene_id, version, base_url).expect("Failed to create ASVRFormat");
+        let mut format_reader = ASVRFormat::new(cursor, scene_id, version, base_url).await.expect("Failed to create ASVRFormat");
         
-        let frame_count = format_reader.frame_count().unwrap();
+        let frame_count = format_reader.frame_count().await.unwrap();
         assert_eq!(frame_count, 3);
         
         // polystream is header + all channel data
@@ -741,9 +809,9 @@ mod tests {
         let expected_data_1 = &[1, 0, 0, 0, 6, 0, 0, 0, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A];
         let expected_data_2 = &[1, 0, 0, 0, 5, 0, 0, 0, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F];
         
-        let decoded_frame_0 = format_reader.decode_frame(0).unwrap();
-        let decoded_frame_1 = format_reader.decode_frame(1).unwrap();
-        let decoded_frame_2 = format_reader.decode_frame(2).unwrap();
+        let decoded_frame_0 = format_reader.decode_frame(0).await.unwrap();
+        let decoded_frame_1 = format_reader.decode_frame(1).await.unwrap();
+        let decoded_frame_2 = format_reader.decode_frame(2).await.unwrap();
         
         assert_eq!(decoded_frame_0.polystream, expected_data_0);
         assert_eq!(decoded_frame_1.polystream, expected_data_1);
@@ -770,8 +838,8 @@ mod tests {
         assert_eq!(decrypted, data);
     }
 
-    #[test]
-    fn test_asvp_writer_empty() {
+    #[tokio::test]
+    async fn test_asvp_writer_empty() {
         use std::io::Cursor;
         
         // Test writing empty frames list
@@ -780,9 +848,9 @@ mod tests {
         
         // Read back - should have 0 frames
         let cursor = Cursor::new(written);
-        let mut format_reader = ASVPFormat::new(cursor).unwrap();
-        
-        assert_eq!(format_reader.frame_count().unwrap(), 0);
+        let mut format_reader = ASVPFormat::new(cursor).await.unwrap();
+
+        assert_eq!(format_reader.frame_count().await.unwrap(), 0);
     }
 
     #[test]
@@ -798,39 +866,38 @@ mod tests {
         // Just verify it doesn't panic during write
     }
 
-    #[test]
-    fn test_asvr_reader_with_real_file() {
+    #[tokio::test]
+    async fn test_asvr_reader_with_real_file() {
         // Test reading a real ASVR file to verify reader works correctly
         // Uses the same test file as test_decrypt_frame_1111
         let test_file_path = "../../test_data/85342/pov_mask.asvr";
-        use std::fs::File;
-        
-        let file = match File::open(test_file_path) {
+
+        let file = match tokio::fs::File::open(test_file_path).await {
             Ok(f) => f,
             Err(_) => {
                 // Skip test if file doesn't exist (CI environments may not have test data)
                 return;
             }
         };
-        
+
         let scene_id = 85342;
         let version = b"1.5.0";
         let base_url = b"pov_mask.asvr";
-        
-        let mut reader = std::io::BufReader::new(file);
-        let mut format_reader = ASVRFormat::new(&mut reader, scene_id, version, base_url)
+
+        let mut reader = tokio::io::BufReader::new(file);
+        let mut format_reader = ASVRFormat::new(&mut reader, scene_id, version, base_url).await
             .expect("Failed to create ASVRFormat from real file");
         
-        let frame_count = format_reader.frame_count().expect("Failed to get frame count");
+        let frame_count = format_reader.frame_count().await.expect("Failed to get frame count");
         assert!(frame_count > 0, "Real file should have at least one frame");
         
         // Try to decode frame 0 and frame 1111 (the hardcoded test case)
-        let frame_0 = format_reader.decode_frame(0).expect("Failed to decode frame 0");
+        let frame_0 = format_reader.decode_frame(0).await.expect("Failed to decode frame 0");
         assert!(!frame_0.polystream.is_empty(), "Frame 0 should not data");
 
         assert_eq!(frame_count, 16375, "Real file should have at 16375 frames");
         // Frame 1111 is a known test vector
-        let frame_1111 = format_reader.decode_frame(1111).expect("Failed to decode frame 1111");
+        let frame_1111 = format_reader.decode_frame(1111).await.expect("Failed to decode frame 1111");
         assert!(!frame_1111.polystream.is_empty(), "Frame 1111 should have data");
     }
 }

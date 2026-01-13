@@ -77,19 +77,19 @@ fn main() {
     let width = 512;
     let height = 256;
 
+    // Create tokio runtime
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
     let builder = AlphaStreamProcessorBuilder::new()
         .processing_mode(ProcessingMode::Bitmap)
         .prefetch_window(1000);
-    let processor = match builder.build_asvr(&asvr_path, scene_id_num, version_bytes, base_url_bytes, width, height) {
+    let processor = match rt.block_on(async { builder.build_asvr(&asvr_path, scene_id_num, version_bytes, base_url_bytes, width, height).await }) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Could not create AlphaStreamProcessor: {}", e);
             process::exit(1);
         }
     };
-
-    // Get metadata
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     let meta = match rt.block_on(processor.metadata()) {
         Ok(m) => m,
         Err(e) => {

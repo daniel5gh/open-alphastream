@@ -6,8 +6,8 @@ use crate::testlib::create_test_asvp;
 use std::time::{Duration, Instant};
 use tokio::time::Instant as TokioInstant;
 
-#[test]
-fn test_full_processor_lifecycle() {
+#[tokio::test]
+async fn test_full_processor_lifecycle() {
     let test_file = create_test_asvp(1).unwrap();
 
     // Create processor
@@ -16,49 +16,44 @@ fn test_full_processor_lifecycle() {
         16,
         16,
         ProcessingMode::Both,
-    ).unwrap();
+    ).await.unwrap();
 
     // Get metadata
-    let metadata = tokio::runtime::Runtime::new().unwrap().block_on(async {
-        processor.metadata().await.unwrap()
-    });
+    let metadata = processor.metadata().await.unwrap();
     assert_eq!(metadata.frame_count, 1);
 
     // Request and get frame
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        processor.request_frame(0).await.unwrap();
+    processor.request_frame(0).await.unwrap();
 
-        let start = TokioInstant::now();
-        let frame = loop {
-            if let Some(f) = processor.get_frame(0, 16, 16).await {
-                break f;
-            }
-            if start.elapsed() > tokio::time::Duration::from_millis(1000) {
-                panic!("frame not ready in time");
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        };
-        assert_eq!(frame.len(), 256); // 16x16
+    let start = TokioInstant::now();
+    let frame = loop {
+        if let Some(f) = processor.get_frame(0, 16, 16).await {
+            break f;
+        }
+        if start.elapsed() > tokio::time::Duration::from_millis(1000) {
+            panic!("frame not ready in time");
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    };
+    assert_eq!(frame.len(), 256); // 16x16
 
-        let start = TokioInstant::now();
-        let vertices = loop {
-            if let Some(v) = processor.get_triangle_strip_vertices(0).await {
-                break v;
-            }
-            if start.elapsed() > tokio::time::Duration::from_millis(1000) {
-                panic!("vertices not ready in time");
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        };
-        assert_eq!(vertices.len(), 174); // Empty for this test data
+    let start = TokioInstant::now();
+    let vertices = loop {
+        if let Some(v) = processor.get_triangle_strip_vertices(0).await {
+            break v;
+        }
+        if start.elapsed() > tokio::time::Duration::from_millis(1000) {
+            panic!("vertices not ready in time");
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    };
+    assert_eq!(vertices.len(), 174); // Empty for this test data
 
-        // Prefetch test: sequential access triggers prefetch
-        let _ = processor.get_frame(1, 16, 16).await; // may fail if no frame 1
-        let _ = processor.get_frame(2, 16, 16).await; // may fail if no frame 2
-        // Prefetch should have been triggered for frame 2
-        // (no assertion here, but coverage for sequential prefetch logic)
-    });
+    // Prefetch test: sequential access triggers prefetch
+    let _ = processor.get_frame(1, 16, 16).await; // may fail if no frame 1
+    let _ = processor.get_frame(2, 16, 16).await; // may fail if no frame 2
+    // Prefetch should have been triggered for frame 2
+    // (no assertion here, but coverage for sequential prefetch logic)
         }
         
         #[test]
@@ -307,12 +302,15 @@ fn test_cache_scheduler_integration() {
 #[test]
 fn test_error_propagation() {
     // Test API error handling
-    let result = AlphaStreamProcessor::new_asvp(
-        "nonexistent_file.asvp",
-        16,
-        16,
-        ProcessingMode::Bitmap,
-    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        AlphaStreamProcessor::new_asvp(
+            "nonexistent_file.asvp",
+            16,
+            16,
+            ProcessingMode::Bitmap,
+        ).await
+    });
     assert!(result.is_err());
 
     // Test C ABI error handling
