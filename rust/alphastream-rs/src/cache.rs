@@ -7,11 +7,9 @@
 // For novices: Like a circular conveyor belt that holds frames in order, where new frames
 // push out the oldest ones, and many workers can read at once without blocking each other.
 
-// Re-export FrameData from formats module
-pub use crate::formats::FrameData;
-
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::RwLock;
+use crate::FrameData;
 
 /// Represents the state of a slot in the ring buffer.
 /// - Empty: No frame data, slot is available

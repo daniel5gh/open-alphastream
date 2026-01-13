@@ -59,7 +59,7 @@ async fn test_full_processor_lifecycle() {
         #[test]
         fn test_ring_buffer_range_handling() {
             use libalphastream::FrameCache;
-            use libalphastream::formats::FrameData;
+            use libalphastream::serializers::FrameData;
             // Test ring buffer range behavior (replaces LRU eviction test)
             let cache = FrameCache::new(3);
             let d0 = FrameData { polystream: vec![0], bitmap: None, triangle_strip: None };
@@ -93,7 +93,7 @@ async fn test_full_processor_lifecycle() {
         #[test]
         fn test_scheduler_prefetch_and_backpressure_edge() {
             use libalphastream::FrameCache;
-            use libalphastream::formats::FrameData;
+            use libalphastream::serializers::FrameData;
             use libalphastream::scheduler::Scheduler;
             use std::sync::Arc;
             let cache = Arc::new(FrameCache::new(4));
@@ -140,7 +140,7 @@ async fn test_full_processor_lifecycle() {
             use std::sync::Arc;
             use std::thread;
             use libalphastream::FrameCache;
-            use libalphastream::formats::FrameData;
+            use libalphastream::serializers::FrameData;
             let cache = Arc::new(FrameCache::new(8));
             let mut handles = vec![];
             for i in 0..8 {
@@ -170,7 +170,7 @@ async fn test_full_processor_lifecycle() {
             use std::sync::Arc;
             use std::thread;
             use libalphastream::FrameCache;
-            use libalphastream::formats::FrameData;
+            use libalphastream::serializers::FrameData;
             use libalphastream::scheduler::{Scheduler};
             let cache = Arc::new(FrameCache::new(5));
             let mut scheduler = Scheduler::new();
@@ -268,7 +268,7 @@ fn test_cache_scheduler_integration() {
 
     // Process tasks and cache results
     while let Some(task) = scheduler.next_task() {
-        let frame_data = formats::FrameData {
+        let frame_data = serializers::FrameData {
             polystream: vec![task.frame_index as u8],
             bitmap: Some(vec![255; 100]),
             triangle_strip: Some(vec![0.0; 10]),
@@ -289,7 +289,7 @@ fn test_cache_scheduler_integration() {
     let cache2 = FrameCache::new(3);
     scheduler2.set_cache(std::sync::Arc::new(cache2.clone()));
     for i in 0..3 {
-        cache2.insert(i, formats::FrameData {
+        cache2.insert(i, serializers::FrameData {
             polystream: vec![i as u8],
             bitmap: Some(vec![255; 100]),
             triangle_strip: Some(vec![0.0; 10]),
