@@ -4,10 +4,10 @@
 Accepted
 
 ## Context
-The current implementation ([`formats.rs`](../../rust/alphastream-rs/src/formats.rs)) only supports reading ASVR (encrypted) and ASVP (plaintext) formats through the [`ASFormat`](../../rust/alphastream-rs/src/formats.rs:54) trait. This read-only abstraction was sufficient for initial development and playback use cases, but two new requirements have emerged:
+The current implementation ([`serializers.rs`](../../rust/alphastream-rs/src/serializers.rs)) only supports reading ASVR (encrypted) and ASVP (plaintext) formats through the [`ASFormat`](../../rust/alphastream-rs/src/serializers.rs:54) trait. This read-only abstraction was sufficient for initial development and playback use cases, but two new requirements have emerged:
 
 ### Use Case 1: Test Suite Generation
-Integration tests and benchmarks require reproducible test data. Currently, the test suite relies on hardcoded test vectors (see [`formats.rs:420-433`](../../rust/alphastream-rs/src/formats.rs:420)) for basic decryption/decompression verification. However, comprehensive testing requires:
+Integration tests and benchmarks require reproducible test data. Currently, the test suite relies on hardcoded test vectors (see [`serializers.rs:420-433`](../../rust/alphastream-rs/src/serializers.rs:420)) for basic decryption/decompression verification. However, comprehensive testing requires:
 - Full file roundtrip tests (read → write → read should produce identical data)
 - Frame-level manipulation tests
 - Error injection tests with known malformed inputs
@@ -36,12 +36,12 @@ The ASWrite trait is replaced with concrete writer structs that follow a two-pha
 ```rust
 /// Writer for plaintext ASVP format
 /// Collects frames first, then writes the complete file
-pub struct ASVPWriter<W: Write> {
+pub struct ASVPSerializer<W: Write> {
     writer: W,
     frames: Vec<FrameData>,
 }
 
-impl<W: Write> ASVPWriter<W> {
+impl<W: Write> ASVPSerializer<W> {
     /// Create a new writer
     pub fn new(writer: W) -> Self {
         Self { writer, frames: Vec::new() }
@@ -89,8 +89,8 @@ impl<W: Write> ASVPWriter<W> {
 }
 
 /// Writer for encrypted ASVR format
-/// Similar to ASVPWriter but with encryption
-pub struct ASVRWriter<W: Write> {
+/// Similar to ASVPSerializer but with encryption
+pub struct ASVRSerializer<W: Write> {
     writer: W,
     scene_id: u32,
     version: Vec<u8>,
@@ -99,7 +99,7 @@ pub struct ASVRWriter<W: Write> {
     frames: Vec<FrameData>,
 }
 
-impl<W: Write> ASVRWriter<W> {
+impl<W: Write> ASVRSerializer<W> {
     /// Create a new writer with encryption parameters
     pub fn new(writer: W, scene_id: u32, version: &[u8], base_url: &[u8]) 
         -> Result<Self, FormatError> {
@@ -165,9 +165,9 @@ impl<W: Write> ASVRWriter<W> {
 
 1. **Two-phase writing**: Frames are collected first via [`add_frame()`](docs/adr/0010-write-support-for-asvr-and-asvp.md), then written in a single [`write_all()`](docs/adr/0010-write-support-for-asvr-and-asvp.md) call. This allows computing all compressed sizes before writing the header.
 
-2. **FrameData input**: The writer accepts [`FrameData`](rust/alphastream-rs/src/formats.rs:44) structs containing polystream data, matching the read interface.
+2. **FrameData input**: The writer accepts [`FrameData`](rust/alphastream-rs/src/serializers.rs:44) structs containing polystream data, matching the read interface.
 
-3. **Separate writers per format**: `ASVPWriter` and `ASVRWriter` are distinct types, allowing format-specific optimizations and error handling.
+3. **Separate writers per format**: `ASVPSerializer` and `ASVRSerializer` are distinct types, allowing format-specific optimizations and error handling.
 
 4. **No streaming write**: Unlike reading, writing requires knowing all frame sizes upfront. This is acceptable because:
    - Test fixture generation creates files in memory first
@@ -197,13 +197,13 @@ ASVR requires encryption, making it more complex:
 ### Integration with Existing Code
 
 The write functionality will be exposed through:
-1. **Utility functions** in [`formats.rs`](../../rust/alphastream-rs/src/formats.rs) for standalone file conversion
+1. **Utility functions** in [`serializers.rs`](../../rust/alphastream-rs/src/serializers.rs) for standalone file conversion
 2. **Test utilities** in [`testlib.rs`](../../rust/alphastream-rs/src/testlib.rs) for generating test fixtures
 3. **CLI tool** (extending [`demo.rs`](../../rust/alphastream-rs/src/bin/demo.rs)) for command-line conversion
 
 ### Error Handling
 
-Write operations will use the existing [`FormatError`](../../rust/alphastream-rs/src/formats.rs:22) enum, with potential additions:
+Write operations will use the existing [`FormatError`](../../rust/alphastream-rs/src/serializers.rs:22) enum, with potential additions:
 - `WriteError` variant for I/O failures during write operations
 - `CompressionError` for zlib compression failures (via `#[from]` on `FormatError`)
 - `EncryptionError` for encryption failures
@@ -228,7 +228,7 @@ Write operations will use the existing [`FormatError`](../../rust/alphastream-rs
 - Can be implemented incrementally (ASVP first, then ASVR)
 
 ## References
-- [formats.rs](../../rust/alphastream-rs/src/formats.rs) - Current read-only format implementation
+- [serializers.rs](../../rust/alphastream-rs/src/serializers.rs) - Current read-only format implementation
 - [testlib.rs](../../rust/alphastream-rs/src/testlib.rs) - Test utilities for extension
 - [ADR 0001: Format Abstraction](0001-format-abstraction.md) - Original read-only abstraction decision
 - [FILE_FORMAT.md](../../FILE_FORMAT.md) - ASVR/ASVP format specification

@@ -1,7 +1,7 @@
 //! Test utilities for alphastream-rs
 //! Provides helpers for creating test ASVP files and other test resources
 
-use crate::formats::{ASVPWriter, ASVRWriter, FrameData, FormatError};
+use crate::serializers::{ASVPSerializer, ASVRSerializer, FrameData, DeserializerError};
 use tempfile::NamedTempFile;
 
 /// Generate random polystream channel data
@@ -26,10 +26,10 @@ fn generate_random_polystream_data(size: usize) -> Vec<u8> {
 /// Create a test ASVP file as a temporary file
 ///
 /// Generates `frame_count` frames with random polystream data
-/// and writes them using ASVPWriter
-pub fn create_test_asvp(frame_count: u32) -> Result<NamedTempFile, FormatError> {
+/// and writes them using ASVPSerializer
+pub fn create_test_asvp(frame_count: u32) -> Result<NamedTempFile, DeserializerError> {
     let file = NamedTempFile::new()?;
-    let mut writer = ASVPWriter::new(file);
+    let mut writer = ASVPSerializer::new(file);
 
     // Generate and add frames with random polystream data
     for _ in 0..frame_count {
@@ -50,16 +50,16 @@ pub fn create_test_asvp(frame_count: u32) -> Result<NamedTempFile, FormatError> 
 /// Create a test ASVR file as a temporary file
 ///
 /// Generates `frame_count` frames with random polystream data
-/// and writes them using ASVRWriter with the given encryption parameters
+/// and writes them using ASVRSerializer with the given encryption parameters
 pub fn create_test_asvr(
     scene_id: u32,
     version: &[u8],
     frame_count: u32,
-) -> Result<NamedTempFile, FormatError> {
+) -> Result<NamedTempFile, DeserializerError> {
     let file = NamedTempFile::new()?;
     let file_path = file.path().to_path_buf();
     let base_url = file_path.file_name().unwrap().to_str().unwrap();
-    let mut writer = ASVRWriter::new(file, scene_id, version, base_url.as_bytes())?;
+    let mut writer = ASVRSerializer::new(file, scene_id, version, base_url.as_bytes())?;
 
     // Generate and add frames with random polystream data
     for _ in 0..frame_count {

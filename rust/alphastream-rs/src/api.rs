@@ -56,8 +56,8 @@ impl AlphaStreamProcessorBuilder {
         self
     }
     /// Build an AlphaStreamProcessor with the configured options for ASVP (plaintext) files
-    pub async fn build_asvp(self, uri: &str, width: u32, height: u32) -> Result<AlphaStreamProcessor, FormatError> {
-        use crate::formats::ASVPFormat;
+    pub async fn build_asvp(self, uri: &str, width: u32, height: u32) -> Result<AlphaStreamProcessor, DeserializerError> {
+        use crate::serializers::ASVPDeserializer;
         use crate::cache::FrameCache;
         use crate::scheduler::Scheduler;
         use crate::runtime::Runtime;
@@ -65,13 +65,13 @@ impl AlphaStreamProcessorBuilder {
         use tokio::sync::Mutex;
 
         let reader = if uri.starts_with("http") {
-            let bytes = reqwest::get(uri).await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?;
+            let bytes = reqwest::get(uri).await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?;
             ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
         } else {
             ReaderWrapper::File(tokio::fs::File::open(uri).await?)
         };
-        let format_inner = ASVPFormat::new(reader).await?;
-        let format = Arc::new(Mutex::new(FormatType::ASVP(format_inner)));
+        let deserializer_inner = ASVPDeserializer::new(reader).await?;
+        let deserializer = Arc::new(Mutex::new(DeserializerType::ASVP(deserializer_inner)));
         let cache = Arc::new(FrameCache::new(self.cache_capacity));
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
@@ -87,7 +87,7 @@ impl AlphaStreamProcessorBuilder {
         let mut processor = AlphaStreamProcessor {
             cache: Arc::clone(&cache),
             scheduler,
-            format,
+            deserializer,
             width,
             height,
             mode: self.processing_mode,
@@ -107,8 +107,8 @@ impl AlphaStreamProcessorBuilder {
         base_url: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<AlphaStreamProcessor, FormatError> {
-        use crate::formats::ASVRFormat;
+    ) -> Result<AlphaStreamProcessor, DeserializerError> {
+        use crate::serializers::ASVRDeserializer;
         use crate::cache::FrameCache;
         use crate::scheduler::Scheduler;
         use crate::runtime::Runtime;
@@ -116,13 +116,13 @@ impl AlphaStreamProcessorBuilder {
         use tokio::sync::Mutex;
 
         let reader = if uri.starts_with("http") {
-            let bytes = reqwest::get(uri).await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?;
+            let bytes = reqwest::get(uri).await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?;
             ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
         } else {
             ReaderWrapper::File(tokio::fs::File::open(uri).await?)
         };
-        let format_inner = ASVRFormat::new(reader, scene_id, version, base_url).await?;
-        let format = Arc::new(Mutex::new(FormatType::ASVR(format_inner)));
+        let deserializer_inner = ASVRDeserializer::new(reader, scene_id, version, base_url).await?;
+        let deserializer = Arc::new(Mutex::new(DeserializerType::ASVR(deserializer_inner)));
         let cache = Arc::new(FrameCache::new(self.cache_capacity));
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
@@ -139,7 +139,7 @@ impl AlphaStreamProcessorBuilder {
         let mut processor = AlphaStreamProcessor {
             cache: Arc::clone(&cache),
             scheduler,
-            format,
+            deserializer,
             width,
             height,
             mode: self.processing_mode,
@@ -161,8 +161,9 @@ impl AlphaStreamProcessorBuilder {
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::cache::{FrameCache, FrameData};
-use crate::formats::{ASFormat, ASVRFormat, ASVPFormat, FormatError, FormatType};
+use crate::cache::{FrameCache};
+use crate::serializers::{AlphaStreamDeserializer, ASVRDeserializer, ASVPDeserializer, DeserializerError, DeserializerType};
+use crate::FrameData;
 use crate::rasterizer::PolystreamRasterizer;
 use crate::runtime::Runtime;
 use crate::scheduler::{Scheduler, Task};
@@ -252,8 +253,8 @@ pub struct AlphaStreamProcessor {
     cache: Arc<FrameCache>,
     /// Task scheduler for frame processing - decides which frames to work on and when
     scheduler: Arc<Mutex<Scheduler>>,
-    /// Format parser (either ASVR or ASVP) - handles reading and decrypting/parsing the file format
-    format: Arc<Mutex<FormatType<ReaderWrapper>>>,
+    /// Deserializer (either ASVR or ASVP format) - handles reading and decrypting/parsing the file format
+    deserializer: Arc<Mutex<DeserializerType<ReaderWrapper>>>,
     /// Output dimensions - width and height of the generated bitmaps/triangle strips
     width: u32,
     height: u32,
@@ -284,15 +285,15 @@ impl AlphaStreamProcessor {
         width: u32,
         height: u32,
         mode: ProcessingMode,
-    ) -> Result<Self, FormatError> {
+    ) -> Result<Self, DeserializerError> {
         let reader = if uri.starts_with("http") {
-            let bytes = reqwest::get(uri).await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?;
+            let bytes = reqwest::get(uri).await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?;
             ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
         } else {
             ReaderWrapper::File(tokio::fs::File::open(uri).await?)
         };
-        let format_inner = ASVRFormat::new(reader, scene_id, version, base_url).await?;
-        let format = Arc::new(Mutex::new(FormatType::ASVR(format_inner)));
+        let deserializer_inner = ASVRDeserializer::new(reader, scene_id, version, base_url).await?;
+        let deserializer = Arc::new(Mutex::new(DeserializerType::ASVR(deserializer_inner)));
         let cache = Arc::new(FrameCache::default());
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
@@ -302,7 +303,7 @@ impl AlphaStreamProcessor {
         let mut processor = Self {
             cache: Arc::clone(&cache),
             scheduler,
-            format,
+            deserializer,
             width,
             height,
             mode,
@@ -314,15 +315,15 @@ impl AlphaStreamProcessor {
     }
 
     /// Create a new processor for ASVP (plaintext) files
-    pub async fn new_asvp(uri: &str, width: u32, height: u32, mode: ProcessingMode) -> Result<Self, FormatError> {
+    pub async fn new_asvp(uri: &str, width: u32, height: u32, mode: ProcessingMode) -> Result<Self, DeserializerError> {
         let reader = if uri.starts_with("http") {
-            let bytes = reqwest::get(uri).await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| FormatError::InvalidFormat(e.to_string()))?;
+            let bytes = reqwest::get(uri).await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?;
             ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
         } else {
             ReaderWrapper::File(tokio::fs::File::open(uri).await?)
         };
-        let format_inner = ASVPFormat::new(reader).await?;
-        let format = Arc::new(Mutex::new(FormatType::ASVP(format_inner)));
+        let deserializer_inner = ASVPDeserializer::new(reader).await?;
+        let deserializer = Arc::new(Mutex::new(DeserializerType::ASVP(deserializer_inner)));
         let cache = Arc::new(FrameCache::default());
         let mut scheduler_obj = Scheduler::new();
         scheduler_obj.set_cache(Arc::clone(&cache));
@@ -332,7 +333,7 @@ impl AlphaStreamProcessor {
         let mut processor = Self {
             cache: Arc::clone(&cache),
             scheduler,
-            format,
+            deserializer,
             width,
             height,
             mode,
@@ -348,9 +349,9 @@ impl AlphaStreamProcessor {
     /// Async method: marked with 'async fn', uses 'await' to wait for operations without blocking.
     /// This is important for I/O operations that might take time.
     /// Returns metadata like frame count, dimensions, etc., or an error if reading fails.
-    pub async fn metadata(&self) -> Result<crate::formats::Metadata, FormatError> {
-        let mut format = self.format.lock().await; // Lock the shared format, await means wait for access
-        format.metadata().await // Call the underlying format's metadata method
+    pub async fn metadata(&self) -> Result<crate::serializers::Metadata, DeserializerError> {
+        let mut deserializer = self.deserializer.lock().await; // Lock the shared deserializer, await means wait for access
+        deserializer.metadata().await // Call the underlying deserializer's metadata method
     }
 
     fn parse_polystream(polystream: &[u8]) -> (u32, Vec<u32>, &[u8]) {
@@ -417,7 +418,7 @@ impl AlphaStreamProcessor {
     }
 
     /// Request a frame for processing
-    pub async fn request_frame(&self, frame_index: u32) -> Result<(), FormatError> {
+    pub async fn request_frame(&self, frame_index: u32) -> Result<(), DeserializerError> {
         // Check bounds using metadata
         let meta = self.metadata().await?;
         if frame_index as usize >= meta.frame_count as usize {
@@ -452,7 +453,7 @@ impl AlphaStreamProcessor {
         use futures::stream::FuturesUnordered;
         use futures::StreamExt;
         let scheduler_clone = Arc::clone(&self.scheduler);
-        let format_clone = Arc::clone(&self.format);
+        let deserializer_clone = Arc::clone(&self.deserializer);
         let width = self.width;
         let height = self.height;
         let mode = self.mode.clone();
@@ -470,14 +471,14 @@ impl AlphaStreamProcessor {
                     // println!("[alphastream debug] Background processing loop: {} queued tasks, {} active tasks, {} max concurrent, {} running tasks", num_queued_tasks, num_active_tasks, num_max_concurrent, num_running_tasks);
                     while let Some(task) = scheduler.next_task() {
                         let frame_index = task.frame_index;
-                        let format = Arc::clone(&format_clone);
+                        let deserializer = Arc::clone(&deserializer_clone);
                         let cache = Arc::clone(&cache_clone);
                         let mode = mode.clone();
                         // Capture generation when task is scheduled for stale task detection
                         let task_generation = cache.generation();
                         let handle = tokio::spawn(async move {
-                            let mut format = format.lock().await;
-                            let frame_data = match format.decode_frame(frame_index as u32).await {
+                            let mut deserializer = deserializer.lock().await;
+                            let frame_data = match deserializer.decode_frame(frame_index as u32).await {
                                 Ok(data) => data,
                                 Err(e) => {
                                     println!("[alphastream] Error decoding frame {}: {}", frame_index, e);
@@ -552,25 +553,6 @@ impl AlphaStreamProcessor {
 
         self.background_handle = Some(handle);
     }
-
-    // /// Process pending tasks (decode frames)
-    // pub async fn process_tasks(&mut self) -> Result<(), FormatError> {
-    //     let mut scheduler = self.scheduler.lock().await;
-    //     while let Some(task) = scheduler.next_task() {
-    //         let format_clone = Arc::clone(&self.format);
-    //         let frame_index = task.frame_index;
-    //         let handle = self.runtime.as_ref().unwrap().spawn_blocking(move || {
-    //             let mut format = format_clone.blocking_lock();
-    //             format.decode_frame(frame_index as u32)
-    //         });
-    //         let result = handle.await.map_err(|e| FormatError::InvalidFormat(format!("Join error: {}", e)))?;
-    //         let frame_data = result?;
-    //         self.cache.insert(frame_index, frame_data);
-    //         scheduler.complete_task();
-    //     }
-    //     Ok(())
-    // }
-
 }
 
 impl Drop for AlphaStreamProcessor {
@@ -719,7 +701,7 @@ mod tests {
         ).await.unwrap();
 
         // Manually insert frame data to test modes
-        let frame_data = crate::formats::FrameData {
+        let frame_data = crate::FrameData {
             polystream: vec![1, 0, 0, 0, 0], // minimal polystream
             bitmap: Some(vec![255; 256]),
             triangle_strip: Some(vec![0.0; 12]),

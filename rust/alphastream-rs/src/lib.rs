@@ -33,7 +33,7 @@ use std::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void, CStr, CString};
 use std::ptr;
 
 pub mod transport;
-pub mod formats;
+pub mod serializers;
 pub mod runtime;
 pub mod scheduler;
 pub mod rasterizer;
@@ -82,7 +82,7 @@ impl AlphaStreamCHandle {
 
 pub use api::{AlphaStreamProcessor, ProcessingMode};
 pub use cache::{FrameCache};
-pub use formats::{FrameData};
+pub use serializers::{FrameData};
 pub use scheduler::{Scheduler, Task};
 // Static C strings for name/version
 static PLUGIN_NAME: &str = "alphastream-rs";

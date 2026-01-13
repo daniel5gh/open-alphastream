@@ -265,7 +265,7 @@ mod tests {
 
         // Fill cache with Ready frames
         for i in 0..4 {
-            cache.insert(i, crate::formats::FrameData {
+            cache.insert(i, crate::FrameData {
                 polystream: vec![i as u8],
                 bitmap: None,
                 triangle_strip: None,
