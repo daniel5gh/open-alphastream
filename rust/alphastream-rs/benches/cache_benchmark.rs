@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use libalphastream::cache::{FrameCache, FrameData};
+use libalphastream::cache::FrameCache;
+use libalphastream::FrameData;
 
 fn bench_cache_operations(c: &mut Criterion) {
     let data = FrameData {
