@@ -488,19 +488,13 @@ impl AlphaStreamProcessor {
                             let mut bitmap = None;
                             let mut triangle_strip = None;
                             if matches!(mode, ProcessingMode::Bitmap | ProcessingMode::Both) {
-                                let mut mask = vec![0u8; (width * height) as usize];
-                                let mut offset = 0;
-                                for &size in &channel_sizes {
-                                    let channel_data_slice = &channel_data[offset..offset + size as usize];
-                                    let channel_mask = PolystreamRasterizer::rasterize(channel_data_slice, width, height);
-                                    for (i, &pixel) in channel_mask.iter().enumerate() {
-                                        if pixel > 0 {
-                                            mask[i] = 255;
-                                        }
-                                    }
-                                    offset += size as usize;
-                                }
-                                bitmap = Some(mask);
+                                // All channels share one even-odd fill so nested channels form holes
+                                let channels = channel_sizes.iter().scan(0usize, |offset, &size| {
+                                    let start = *offset;
+                                    *offset += size as usize;
+                                    Some(&channel_data[start..*offset])
+                                });
+                                bitmap = Some(PolystreamRasterizer::rasterize_channels(channels, width, height));
                             }
                             if matches!(mode, ProcessingMode::TriangleStrip | ProcessingMode::Both) {
                                 let mut vertices = Vec::new();
