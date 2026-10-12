@@ -122,7 +122,7 @@ pub fn derive_key(scene_id: u32, version: &[u8], base_url: &[u8]) -> Result<[u8;
 }
 
 /// Decrypt data using ChaCha20 with the given key and key_id
-fn decrypt_frame_data(data: &[u8], key: &[u8; 32], key_id: u32) -> Result<Vec<u8>, DeserializerError> {
+pub(crate) fn decrypt_frame_data(data: &[u8], key: &[u8; 32], key_id: u32) -> Result<Vec<u8>, DeserializerError> {
     // Nonce: 8 bytes, first 4 zero, last 4 key_id little-endian
     // This matches the Python implementation's iv = b"\x00" * 12 + key_id.to_bytes(4, "little")
     // where ChaCha20Legacy uses 8-byte nonce derived from the iv.
@@ -223,6 +223,7 @@ impl<W: Write> ASVPSerializer<W> {
         let mut header = [0u8; 16];
         // we put "ASVPPLN1" as the first 8 bytes of the header, to make it easy to identify plaintext files
         header[0..8].copy_from_slice(b"ASVPPLN1");
+        header[8..12].copy_from_slice(&(self.frames.len() as u32).to_le_bytes());
         header[12..16].copy_from_slice(&(compressed_sizes.len() as u32).to_le_bytes());
         self.writer.write_all(&header)?;
         self.writer.write_all(&compressed_sizes)?;
@@ -310,6 +311,7 @@ impl<W: Write> ASVRSerializer<W> {
         let mut header = [0u8; 16];
         // first 8 bytes of an official asvr at version 1.5.0 is: 04 00 00 00 00 00 00 00
         header[0..8].copy_from_slice(&[0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        header[8..12].copy_from_slice(&(self.frames.len() as u32).to_le_bytes());
         header[12..16].copy_from_slice(&(compressed_sizes.len() as u32).to_le_bytes());
         let mut to_encrypt = Vec::with_capacity(16 + compressed_sizes.len());
         to_encrypt.extend_from_slice(&header);

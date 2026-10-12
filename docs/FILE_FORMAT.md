@@ -49,8 +49,13 @@ The file is logically split into:
 
 ### 1) Header (16 bytes)
 
-- Bytes 12..15 (inclusive) are a 32-bit little-endian integer specifying the size (in bytes) of the zlib-compressed Sizes Table.
-- Other header fields are reserved/unknown for now; do not depend on them.
+After decryption (key_id $= \texttt{0xFFFFFFFF}$):
+
+- Bytes 0..7: u64 LE format version, always `4` (the library's `CryptoV4` / `HeaderV4` classes).
+- Bytes 8..11: u32 LE frame count $M$ (equals the decompressed Sizes Table length / 8).
+- Bytes 12..15: u32 LE size (in bytes) of the zlib-compressed Sizes Table.
+
+Because bytes 0..7 and the zlib magic at byte 16 are fixed, decrypting just the first 18 bytes verifies a key guess.
 
 Example (Python): `compressed_data_size = int.from_bytes(header[12:16], 'little')`
 
@@ -107,15 +112,17 @@ $$\bigl(x_0, y_0\bigr),\ \bigl(x_0 + \Delta x_1,\ y_0 + \Delta y_1\bigr),\ \ldot
 Notes:
 - All integers are little-endian.
 - Channel payloads may be as small as 6 bytes (two points: base + one delta).
+- Points are in a fixed **2048×1024** source space (x up to 2047), independent of the video resolution.
+- Each channel is a closed polygon (the edge from the last point back to the first is implied). Channels are not independent shapes: a channel nested inside another is a hole, and holes are wound opposite to their outer channel.
 
 ## Drawing Model (Informative)
 
 The binary:
-- Converts each channel payload into a list of absolute points.
-- Draws line segments between successive points using Bresenham with clipping to the output mask rectangle.
-- Optionally performs a scanline analysis/update pass to fill interior regions.
+- Converts each channel payload into a list of absolute points and scales them to the mask size (truncating).
+- Draws line segments between successive points (and the closing segment) using Bresenham with clipping to the output mask rectangle.
+- Fills the edges of all channels together in one even-odd scanline pass.
 
-Python mirror: see [alpha_stream_draw.py](alpha_stream_draw.py).
+Details: [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md#rasterizer-details-and-parity). Python mirror: see [alpha_stream_draw.py](../python/alpha_stream_draw.py).
 
 ## Random Access and HTTP Range Compatibility
 

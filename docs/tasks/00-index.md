@@ -35,5 +35,6 @@
 33. [33-cache-scheduler-integration.md](docs/tasks/33-cache-scheduler-integration.md)
 34. [34-lru-prefetch-threadsafe-tests.md](docs/tasks/34-lru-prefetch-threadsafe-tests.md)
 35. [35-architecture-api-docs-update.md](docs/tasks/35-architecture-api-docs-update.md)
+36. [36-ear-clipping-triangulation.md](docs/tasks/36-ear-clipping-triangulation.md) (low priority)
 
 Note: Legacy filenames remain in the repository; this index defines the canonical execution order.
