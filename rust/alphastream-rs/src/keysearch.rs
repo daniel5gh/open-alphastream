@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
-use crate::formats::{decrypt_frame_data, derive_key};
+use crate::serializers::{decrypt_frame_data, derive_key};
 
 /// Number of leading file bytes needed to verify a key guess.
 pub const HEADER_PROBE_LEN: usize = 18;
@@ -134,7 +134,7 @@ pub fn find_key_inputs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::formats::{ASVRWriter, FrameData};
+    use crate::serializers::{ASVRSerializer, FrameData};
 
     #[test]
     fn base_name_rules() {
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn finds_known_scene_id() {
-        let mut writer = ASVRWriter::new(Vec::new(), 12345, b"1.5.0", b"pov_mask.asvr").unwrap();
+        let mut writer = ASVRSerializer::new(Vec::new(), 12345, b"1.5.0", b"pov_mask.asvr").unwrap();
         for i in 0..3u8 {
             writer.add_frame(FrameData { polystream: vec![i; 16], bitmap: None, triangle_strip: None });
         }
