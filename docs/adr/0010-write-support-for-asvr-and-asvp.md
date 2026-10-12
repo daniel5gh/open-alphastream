@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-The current implementation ([`serializers.rs`](../../rust/alphastream-rs/src/serializers.rs)) only supports reading ASVR (encrypted) and ASVP (plaintext) formats through the [`ASFormat`](../../rust/alphastream-rs/src/serializers.rs:54) trait. This read-only abstraction was sufficient for initial development and playback use cases, but two new requirements have emerged:
+The current implementation ([`serializers.rs`](../../rust/alphastream-rs/src/serializers.rs)) only supports reading ASVR (encrypted) and ASVP (plaintext) formats through the [`AlphaStreamDeserializer`](../../rust/alphastream-rs/src/serializers.rs:63) trait. This read-only abstraction was sufficient for initial development and playback use cases, but two new requirements have emerged:
 
 ### Use Case 1: Test Suite Generation
 Integration tests and benchmarks require reproducible test data. Currently, the test suite relies on hardcoded test vectors (see [`serializers.rs:420-433`](../../rust/alphastream-rs/src/serializers.rs:420)) for basic decryption/decompression verification. However, comprehensive testing requires:
@@ -29,12 +29,12 @@ This conversion requires the ability to:
 ## Decision
 Implement writer structs for ASVR and ASVP formats that collect all frames first, then write the complete file in a single operation. This two-phase approach is necessary because the file header contains the compressed sizes table, which requires knowing all frame sizes before writing.
 
-### Writer Design
+### Serializer Design
 
 The ASWrite trait is replaced with concrete writer structs that follow a two-phase pattern:
 
 ```rust
-/// Writer for plaintext ASVP format
+/// Serializer for plaintext ASVP format
 /// Collects frames first, then writes the complete file
 pub struct ASVPSerializer<W: Write> {
     writer: W,
@@ -54,7 +54,7 @@ impl<W: Write> ASVPSerializer<W> {
     
     /// Write all collected frames to the file
     /// This writes the header first (with sizes table), then all frames
-    pub fn write_all(mut self) -> Result<(), FormatError> {
+    pub fn write_all(mut self) -> Result<(), DeserializerError> {
         // Pre-compress all frames to determine sizes
         let mut frame_sizes = Vec::with_capacity(self.frames.len());
         let mut compressed_frames = Vec::with_capacity(self.frames.len());
@@ -88,7 +88,7 @@ impl<W: Write> ASVPSerializer<W> {
     }
 }
 
-/// Writer for encrypted ASVR format
+/// Serializer for encrypted ASVR format
 /// Similar to ASVPSerializer but with encryption
 pub struct ASVRSerializer<W: Write> {
     writer: W,
@@ -102,7 +102,7 @@ pub struct ASVRSerializer<W: Write> {
 impl<W: Write> ASVRSerializer<W> {
     /// Create a new writer with encryption parameters
     pub fn new(writer: W, scene_id: u32, version: &[u8], base_url: &[u8]) 
-        -> Result<Self, FormatError> {
+        -> Result<Self, DeserializerError> {
         let key = derive_key(scene_id, version, base_url)?;
         Ok(Self {
             writer,
@@ -120,7 +120,7 @@ impl<W: Write> ASVRSerializer<W> {
     }
     
     /// Write all collected frames to the encrypted file
-    pub fn write_all(mut self) -> Result<(), FormatError> {
+    pub fn write_all(mut self) -> Result<(), DeserializerError> {
         // Pre-compress and encrypt all frames
         let mut frame_sizes = Vec::with_capacity(self.frames.len());
         let mut encrypted_frames = Vec::with_capacity(self.frames.len());
@@ -203,9 +203,9 @@ The write functionality will be exposed through:
 
 ### Error Handling
 
-Write operations will use the existing [`FormatError`](../../rust/alphastream-rs/src/serializers.rs:22) enum, with potential additions:
+Write operations will use the existing [`DeserializerError`](../../rust/alphastream-rs/src/serializers.rs:27) enum, with potential additions:
 - `WriteError` variant for I/O failures during write operations
-- `CompressionError` for zlib compression failures (via `#[from]` on `FormatError`)
+- `CompressionError` for zlib compression failures (via `#[from]` on `DeserializerError`)
 - `EncryptionError` for encryption failures
 
 ## Consequences
