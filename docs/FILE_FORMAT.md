@@ -49,8 +49,13 @@ The file is logically split into:
 
 ### 1) Header (16 bytes)
 
-- Bytes 12..15 (inclusive) are a 32-bit little-endian integer specifying the size (in bytes) of the zlib-compressed Sizes Table.
-- Other header fields are reserved/unknown for now; do not depend on them.
+After decryption (key_id $= \texttt{0xFFFFFFFF}$):
+
+- Bytes 0..7: u64 LE format version, always `4` (the library's `CryptoV4` / `HeaderV4` classes).
+- Bytes 8..11: u32 LE frame count $M$ (equals the decompressed Sizes Table length / 8).
+- Bytes 12..15: u32 LE size (in bytes) of the zlib-compressed Sizes Table.
+
+Because bytes 0..7 and the zlib magic at byte 16 are fixed, decrypting just the first 18 bytes verifies a key guess.
 
 Example (Python): `compressed_data_size = int.from_bytes(header[12:16], 'little')`
 
