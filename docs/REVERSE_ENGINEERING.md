@@ -39,8 +39,9 @@ Primary references:
   - Each channel: base absolute (x0,y0) as two `uint16_le` (4 bytes), then successive `(dx,dy)` as `int8` pairs.
   - Point count: $N = \frac{b}{2} - 1$ for payload byte size $b$.
 - Rasterization
+  - Scale points from the 2048×1024 source space to the mask size.
   - Draw connected segments via Bresenham line algorithm with clipping to mask rectangle.
-  - Post-process scanlines to fill interior coverage.
+  - Fill the edges of all channels together with one even-odd scanline pass (nested channels are holes). See [Rasterizer details and parity](#rasterizer-details-and-parity).
 
 ## Ghidra Workflow
 
@@ -286,6 +287,33 @@ Decompiled with REA + Ghidra 12.1.4 (14.3: decode `FUN_0010b580`, raster `FUN_00
 - Per polygon (including the closing edge last → first): draw the outline with clipping, and build an edge list in 16.16 fixed point (`x << 16 | 0x8000`, slope `dx/dy`).
 - Edges are sorted, then filled with an even-odd active-edge scanline fill.
 - Output is a **1-bit-per-pixel, MSB-first packed** bitmap (row offset `y * width / 8`); the bit-mask table `ff7f3f1f0f070301 80c0e0f0f8fcfeff` appears exactly once in all four versions.
+
+### Rasterizer details and parity
+
+Details of the 14.3 functions (`FUN_0010705c` and callees), needed for a bit-exact port:
+
+- **Source space is 2048×1024.** The decoder object's constructor (`0x10b420`) stores the constant pair `2048, 1024` (`.rodata`, file offset `0x4898` in 14.3; present once in every version) at `+0x34/+0x38`, and the decode computes `scale = out / src` in `double`. Real data reaches x = 2047. Each point becomes `(long)(scale * x)` (`FUN_0010c03c`).
+- **One edge table for all channels.** `FUN_0010705c` calls the per-polygon edge builder (`FUN_00107148`) for every channel into the same edge vector, then fills once (`FUN_0010747c`). Even-odd parity therefore spans channels: a channel inside another is a hole. In 85342, 66 of 150 sampled frames contain such nested channels, and the hole is always fully contained and wound opposite to its outer channel.
+- **Outline:** for each segment (starting with the closing edge last → first), `FUN_00107af0` draws a midpoint line. It always draws left to right (swapping endpoints when dx < 0), takes x as the major axis when `dx >= |dy|`, starts with `d = major - 2·minor`, and steps the minor axis only while `d < 0`. Polygons with one or two points still draw their outline (a dot or a line).
+- **Line clipping** (`FUN_00107918`) is Cohen-Sutherland in a fixed order: outcodes `1=x<0, 2=x>=w, 4=y<0, 8=y>=h`. It rejects if the codes share a bit. Otherwise it moves each endpoint onto the top/bottom border, recomputes x-only codes, rejects again if they share a bit, then moves endpoints onto the left/right border. Each move is `a + (double)n1 * (double)n2 / (double)d`, truncated. The second endpoint uses the already-moved first one.
+- **Edges** (32 bytes: `i32 ymin, i32 ymax, i64 x, i64 slope, next*`): when both endpoints are inside, `x = X << 16 | 0x8000` and `slope = (x1 - x0) / (y1 - y0)` (C division, truncating). When an endpoint is outside, the builder calls the clipper, **ignores its accept flag**, and, if the clipped y values differ, uses the clipped endpoints shifted `<< 16` *without* the 0x8000 bias, then extrapolates back to the original `ymin`. Horizontal edges are skipped.
+- **Fill:** edges are sorted by `(ymin, x, slope)` with a sentinel appended. Rows run from the smallest `ymin` up to `min(max ymax, height)`. An edge is active for `ymin <= y < ymax`, and the active list is bubble-sorted by x after each step. Pairs fill pixels `x0 >> 16 ..= x1 >> 16` (clamped, skipped if entirely outside) using the start/end byte masks and `memset(0xff)` between them. Nothing is drawn for rows `< 0`, but edges still step through them.
+
+**Parity check.** The native rasterizer was run under [Unicorn](https://www.unicorn-engine.org/) (AArch64). The method was:
+
+- map the `.so` `PT_LOAD` segments, and set `TPIDR_EL0` so the stack canary works;
+- replace the PLT stubs for `operator new/delete`, `memcpy`, `memset` and `__stack_chk_fail` with Python hooks;
+- build the `vector<vector<{i64 x, i64 y}>>` input in emulated memory, and call `0x705c(buf, w, h, &polys)` with already-scaled points.
+
+The Rust rasterizer (`rasterize_channels`) and the Python reference (`rasterize_channels`) are both bit-exact against it:
+
+| Input | Output sizes | Differing pixels |
+|---|---|---|
+| 200 frames of 85342 | 512×256, 1000×500, 1920×1080, 2048×1024, 4096×2048 | 0 |
+| 150 frames of a second scene | 1920×1080, 2048×1024 | 0 |
+| 700 random frames, polygons crossing every border | 64×32 to 2048×1024 | 0 |
+
+The previous Rust rasterizer (2024-wide source, per-channel fill ORed together, clamped lines) differed on about 22% of set pixels. It was also about 25–29× slower: 6.7 ms vs 0.23 ms per frame at 2048×1024, and 25 ms vs 0.96 ms at 4096×2048.
 
 ### Insights from the 15.3 dev build
 

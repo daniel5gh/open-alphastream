@@ -112,15 +112,17 @@ $$\bigl(x_0, y_0\bigr),\ \bigl(x_0 + \Delta x_1,\ y_0 + \Delta y_1\bigr),\ \ldot
 Notes:
 - All integers are little-endian.
 - Channel payloads may be as small as 6 bytes (two points: base + one delta).
+- Points are in a fixed **2048×1024** source space (x up to 2047), independent of the video resolution.
+- Each channel is a closed polygon (the edge from the last point back to the first is implied). Channels are not independent shapes: a channel nested inside another is a hole, and holes are wound opposite to their outer channel.
 
 ## Drawing Model (Informative)
 
 The binary:
-- Converts each channel payload into a list of absolute points.
-- Draws line segments between successive points using Bresenham with clipping to the output mask rectangle.
-- Optionally performs a scanline analysis/update pass to fill interior regions.
+- Converts each channel payload into a list of absolute points and scales them to the mask size (truncating).
+- Draws line segments between successive points (and the closing segment) using Bresenham with clipping to the output mask rectangle.
+- Fills the edges of all channels together in one even-odd scanline pass.
 
-Python mirror: see [alpha_stream_draw.py](alpha_stream_draw.py).
+Details: [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md#rasterizer-details-and-parity). Python mirror: see [alpha_stream_draw.py](../python/alpha_stream_draw.py).
 
 ## Random Access and HTTP Range Compatibility
 

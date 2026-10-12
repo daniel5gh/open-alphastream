@@ -300,13 +300,14 @@ pub extern "C" fn CV_get_frame(handle: *mut AlphaStreamCHandle, frame_index: c_u
     }
 }
 
-/// Get triangle strip vertices for 3D rendering
-/// Returns vertex data for rendering the frame as 3D geometry.
+/// Get the frame's mask as triangles for GPU rendering.
 /// Parameters:
-/// - out_vertices: Pointer to receive array of float coordinates (x,y,z,x,y,z,...)
+/// - out_vertices: Pointer to receive array of float coordinates (x,y,x,y,...)
 /// - out_count: Pointer to receive number of floats in the array
 /// Returns true on success, false on error.
-/// The vertex array contains 3D positions for triangle strip rendering.
+/// The vertices form a triangle LIST (3 vertices per triangle, draw with list topology, not strip)
+/// in the 2048x1024 source space. The triangles are fans of possibly concave polygons, so they must
+/// be drawn with an even-odd stencil (invert, then cover); see docs/TRIANGLE_RENDERING.md.
 /// In C#: float* vertices; IntPtr count; bool success = CV_get_triangle_strip_vertices(handle, frame, &vertices, &count);
 #[no_mangle]
 pub extern "C" fn CV_get_triangle_strip_vertices(handle: *mut AlphaStreamCHandle, frame_index: c_ulonglong, out_vertices: *mut *const f32, out_count: *mut usize) -> bool {

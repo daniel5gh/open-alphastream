@@ -101,7 +101,7 @@ References:
 ## Frame Cache & Rasterization
 
 - Cache holds alpha bit masks or triangle strips (or both) keyed by frame index; LRU with size/fps-aware prefetch. See [docs/tasks/10-rasterization-polystreams.md](docs/tasks/10-rasterization-polystreams.md) for triangle strip details.
-- Rasterizer transforms alpha masks to requested bitmap size or generates triangle strips; scaling policy (nearest/bilinear) — TBD.
+- Rasterizer renders the polystreams directly at the requested bitmap size, or generates triangles. The bitmap rasterizer is bit-exact with libalphastream (verified by emulating the native rasterizer on real and fuzzed frames): points are scaled from the 2048x1024 source space (truncating), outlines are drawn with clipped midpoint lines, and all channels share one even-odd scanline fill so nested channels form holes. See [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md#rasterizer-details-and-parity).
 - Bitmap layout optimized for GPU upload (tightly packed, row-aligned); exact format — TBD.
 - Metadata-driven pipeline (dimensions, stride, version flags).
 - Instrumentation: hit/miss counters, stall metrics.
@@ -139,7 +139,7 @@ $$
 - Source management: load_source(source), close(); sources can be constructed/selected as HTTP, local file, or in-memory slice via transport constructors.
 - Rate control: set_rate(fps), get_rate().
 - Frame access: get_frame(frame_index, width, height) returns an R8 bitmap per the defined layout; when resizing, nearest-neighbor scaling is applied; cache-first with possible immediate decode escalation within a 12ms timebox; on failure returns None and sets the per-instance last error; retrieve via last_error().
-- Triangle access: get_triangle_strip_vertices(frame_index) -> Result<Vec<f32>, Error>, returning a Vec<f32> containing x,y positions in triangle strip order suitable for graphics APIs like wgpu with TriangleStrip topology. Triangle strip format: vertices are arranged sequentially where each set of three consecutive vertices forms a triangle, sharing edges for efficient rendering.
+- Triangle access: get_triangle_strip_vertices(frame_index) returns a Vec<f32> of x,y pairs forming a **triangle list** (three vertices per triangle; draw with list topology, not strip) in the 2048x1024 source space. Each channel's polygon is fanned from its first vertex, so for concave polygons and nested channels (holes) the triangles overlap. They must be drawn with an even-odd stencil (invert per triangle, then cover) to reproduce the mask; see [TRIANGLE_RENDERING.md](TRIANGLE_RENDERING.md).
 - Diagnostics: last_error() returns {code, message} for this handle; clear_error() resets the handle's last error to None; get_metadata() exposes format/source metadata.
 - Lifecycle: start(), stop(); optional auto-start on source load — TBD.
 
