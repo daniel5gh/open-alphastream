@@ -143,6 +143,11 @@ $$
 - Diagnostics: last_error() returns {code, message} for this handle; clear_error() resets the handle's last error to None; get_metadata() exposes format/source metadata.
 - Lifecycle: start(), stop(); optional auto-start on source load — TBD.
 
+## Cargo Features & Distribution
+- Crate and library name: `alphastream`. The C library is `libalphastream.so` / `alphastream.dll` / `libalphastream.dylib` (plus `libalphastream.a`), header in `rust/alphastream-rs/include/alphastream.h` (generated with cbindgen, see `cbindgen.toml`).
+- Features: `http` (default; fetch over HTTP(S) via reqwest/rustls), `testlib` (synthetic ASVR/ASVP generators), `keysearch` (key input recovery), `cli` (the `demo` and `keysearch` binaries; implies `http` and `keysearch`).
+- Releases: pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, builds Linux/macOS/Windows archives (library, header, CLI tools, checksums) and creates a GitHub release. Nothing is published to crates.io yet.
+
 ## Error Handling Strategy
 
 - Per-instance last error code/message maintained on each handle; thread-safe updates via internal synchronization.

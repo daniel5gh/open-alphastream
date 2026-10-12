@@ -10,6 +10,7 @@ Also created as a reverse‑engineering exercise to maintain skills and as a sho
 
 Key docs and code:
 - [AGENTS.md](AGENTS.md)
+- [Rust crate README](rust/alphastream-rs/README.md) (features, C library, header)
 - [FILE_FORMAT.md](docs/FILE_FORMAT.md)
 - [alpha_stream_crypto.py](python/alpha_stream_crypto.py)
 - [alpha_stream_draw.py](python/alpha_stream_draw.py)

@@ -88,8 +88,8 @@ pub use cache::{FrameCache};
 pub use serializers::{FrameData};
 pub use scheduler::{Scheduler, Task};
 // Static C strings for name/version
-static PLUGIN_NAME: &str = "alphastream-rs";
-static PLUGIN_VERSION: &str = "0.1.0";
+static PLUGIN_NAME: &str = env!("CARGO_PKG_NAME");
+static PLUGIN_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn static_cstr(s: &str) -> *const c_char {
     // Leak a CString to keep pointer valid for process lifetime
