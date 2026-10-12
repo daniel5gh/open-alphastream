@@ -40,6 +40,7 @@ pub mod rasterizer;
 pub mod cache;
 pub mod api;
 pub mod testlib;
+pub mod keysearch;
 
 /// Handle structure for C API
 /// This struct is passed between C functions to maintain state.

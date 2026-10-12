@@ -47,3 +47,7 @@ harness = false
 [[bin]]
 name = "demo"
 path = "src/bin/demo.rs"
+
+[[bin]]
+name = "keysearch"
+path = "src/bin/keysearch.rs"
