@@ -112,10 +112,28 @@ jobs:
         merge-multiple: true
     - name: Checksums
       run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
-    - name: Create GitHub release
+    - name: Create or update GitHub release
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
+        # A release for this tag may already exist (e.g. created by hand in the
+        # GitHub UI to get generated notes). In that case keep its title and
+        # notes, and just attach/replace the build artifacts.
+        upload() {
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+        }
+        if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+          echo "Release $GITHUB_REF_NAME exists, uploading assets"
+          upload
+          exit 0
+        fi
         flags=""
         case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
-        gh release create "$GITHUB_REF_NAME" dist/*           --repo "$GITHUB_REPOSITORY"           --title "$GITHUB_REF_NAME"           --generate-notes $flags
+        if ! gh release create "$GITHUB_REF_NAME" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes $flags; then
+          # Lost a race with someone creating the release at the same time.
+          echo "Create failed, retrying as upload to existing release"
+          upload
+        fi
