@@ -268,7 +268,7 @@ mod tests {
             cache.insert(i, crate::FrameData {
                 polystream: vec![i as u8],
                 bitmap: None,
-                triangle_strip: None,
+                triangle_vertices: None,
             });
         }
         

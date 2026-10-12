@@ -100,7 +100,7 @@ References:
 
 ## Frame Cache & Rasterization
 
-- Cache holds alpha bit masks or triangle strips (or both) keyed by frame index; LRU with size/fps-aware prefetch. See [docs/tasks/10-rasterization-polystreams.md](docs/tasks/10-rasterization-polystreams.md) for triangle strip details.
+- Cache holds alpha bit masks or triangle lists (or both) keyed by frame index; LRU with size/fps-aware prefetch. See [docs/tasks/10-rasterization-polystreams.md](docs/tasks/10-rasterization-polystreams.md) for triangle list details.
 - Rasterizer renders the polystreams directly at the requested bitmap size, or generates triangles. The bitmap rasterizer is bit-exact with libalphastream (verified by emulating the native rasterizer on real and fuzzed frames): points are scaled from the 2048x1024 source space (truncating), outlines are drawn with clipped midpoint lines, and all channels share one even-odd scanline fill so nested channels form holes. See [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md#rasterizer-details-and-parity).
 - Bitmap layout optimized for GPU upload (tightly packed, row-aligned); exact format — TBD.
 - Metadata-driven pipeline (dimensions, stride, version flags).
@@ -139,7 +139,7 @@ $$
 - Source management: load_source(source), close(); sources can be constructed/selected as HTTP, local file, or in-memory slice via transport constructors.
 - Rate control: set_rate(fps), get_rate().
 - Frame access: get_frame(frame_index, width, height) returns an R8 bitmap per the defined layout; when resizing, nearest-neighbor scaling is applied; cache-first with possible immediate decode escalation within a 12ms timebox; on failure returns None and sets the per-instance last error; retrieve via last_error().
-- Triangle access: get_triangle_strip_vertices(frame_index) returns a Vec<f32> of x,y pairs forming a **triangle list** (three vertices per triangle; draw with list topology, not strip) in the 2048x1024 source space. Each channel's polygon is fanned from its first vertex, so for concave polygons and nested channels (holes) the triangles overlap. They must be drawn with an even-odd stencil (invert per triangle, then cover) to reproduce the mask; see [TRIANGLE_RENDERING.md](TRIANGLE_RENDERING.md).
+- Triangle access: get_triangle_vertices(frame_index) returns a Vec<f32> of x,y pairs forming a **triangle list** (three vertices per triangle; draw with list topology, not strip) in the 2048x1024 source space. Each channel's polygon is fanned from its first vertex, so for concave polygons and nested channels (holes) the triangles overlap. They must be drawn with an even-odd stencil (invert per triangle, then cover) to reproduce the mask; see [TRIANGLE_RENDERING.md](TRIANGLE_RENDERING.md).
 - Diagnostics: last_error() returns {code, message} for this handle; clear_error() resets the handle's last error to None; get_metadata() exposes format/source metadata.
 - Lifecycle: start(), stop(); optional auto-start on source load — TBD.
 
@@ -176,7 +176,7 @@ $$
 - Batch rasterization when feasible; avoid redundant scaling.
 - Nearest-neighbor scaling chosen for low CPU overhead during resize.
 - Benchmark suite and profiling hooks aligned with [AGENTS.md](AGENTS.md).
-- Triangle strips: optional storage increases memory usage but enables efficient caller-side rasterization; configurable processing types balance performance trade-offs; see [docs/tasks/10-rasterization-polystreams.md](docs/tasks/10-rasterization-polystreams.md).
+- Triangle lists: optional storage increases memory usage but enables efficient caller-side rasterization; configurable processing types balance performance trade-offs; see [docs/tasks/10-rasterization-polystreams.md](docs/tasks/10-rasterization-polystreams.md).
 
 ### Ring Buffer Cache - Performance Lessons Learned
 

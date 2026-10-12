@@ -6,7 +6,7 @@ fn bench_cache_operations(c: &mut Criterion) {
     let data = FrameData {
         polystream: vec![1, 2, 3, 4],
         bitmap: Some(vec![128; 100 * 100]), // Smaller frame for isolating copying effects
-        triangle_strip: Some(vec![0.0; 100]), // Smaller triangle strip data
+        triangle_vertices: Some(vec![0.0; 100]), // Smaller triangle data
     };
 
     c.bench_function("cache_insert", |b| {

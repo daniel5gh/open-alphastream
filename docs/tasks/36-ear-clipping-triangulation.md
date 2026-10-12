@@ -17,7 +17,7 @@ Add an optional triangle output whose triangles do not overlap and cover exactly
 - Triangulate each outer polygon together with its holes. Join each hole to the outer ring with a bridge edge, then ear-clip. Evaluate an existing implementation of the earcut algorithm (a Mapbox earcut port such as the `earcut` or `earcutr` crates) before writing one. It must handle holes and degenerate input without panicking.
 - Self-intersecting polygons: earcut's local intersection handling is acceptable. Document that coverage can then differ slightly from the even-odd mask. A per-polygon fallback to the fan (marked for stencil) is out of scope unless it proves necessary.
 - Output a triangle list of x,y `f32` pairs in the same 2048×1024 source space and layout as the fan output, so callers can switch modes without other changes.
-- Expose it as a new processing mode next to `TriangleStrip` (for example `ProcessingMode::TriangleMesh`), and through the C ABI, either as a new function or as a mode on the existing one. Keep the existing fan output unchanged.
+- Expose it as a new processing mode next to `Triangles` (for example `ProcessingMode::TriangleMesh`), and through the C ABI, either as a new function or as a mode on the existing one. Keep the existing fan output unchanged.
 
 ## Deliverables
 - A triangulation function in `rasterizer.rs` (or a new module), wired into the frame-processing task in `api.rs`.
@@ -40,4 +40,4 @@ Add an optional triangle output whose triangles do not overlap and cover exactly
 ## References
 - [TRIANGLE_RENDERING.md](../TRIANGLE_RENDERING.md): the stencil method and the fan output format
 - [REVERSE_ENGINEERING.md](../REVERSE_ENGINEERING.md#rasterizer-details-and-parity): native fill semantics
-- [19-triangle-strip-generation.md](19-triangle-strip-generation.md)
+- [19-triangle-generation.md](19-triangle-generation.md)

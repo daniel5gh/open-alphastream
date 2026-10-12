@@ -1,6 +1,6 @@
 # Rendering the Triangle Output
 
-`get_triangle_strip_vertices` / `CV_get_triangle_strip_vertices` return a frame's mask as triangles instead of a bitmap. Generating them is a single pass over the points, and a typical frame is about 5 KB (about 230 triangles), whatever the output resolution. The GPU then rasterizes the mask at any resolution, optionally with MSAA. The triangles are **not** a ready-to-fill mesh, though: drawn naively they give a wrong mask. This page explains what you get and how to draw it to get the same shape as the bitmap rasterizer (and libalphastream).
+`get_triangle_vertices` / `CV_get_triangle_vertices` return a frame's mask as triangles instead of a bitmap. Generating them is a single pass over the points, and a typical frame is about 5 KB (about 230 triangles), whatever the output resolution. The GPU then rasterizes the mask at any resolution, optionally with MSAA. The triangles are **not** a ready-to-fill mesh, though: drawn naively they give a wrong mask. This page explains what you get and how to draw it to get the same shape as the bitmap rasterizer (and libalphastream).
 
 The result can still differ from the bitmap at edge pixels. The GPU samples pixel centres, while the bitmap samples crossings at the integer row and also draws each polygon's outline, which makes it up to one pixel larger on the right and bottom edges.
 
@@ -10,7 +10,7 @@ The result can still differ from the bitmap at edge pixels. The GPU samples pixe
 - **Triangle list** topology: every three vertices form one triangle, and no vertices are shared. Do not draw with strip topology. A strip would draw every triangle twice, which cancels out in the stencil below, and would add triangles bridging one channel to the next.
 - Coordinates are in the **2048×1024 source space** with a top-left origin and y pointing down. That space covers the whole mask (the same area the bitmap covers at any size). Points stay inside it for real content.
 - Each channel's polygon is fanned from its first vertex: `(v0, v1, v2), (v0, v2, v3), …`. The fans of all channels are concatenated.
-- From C: the pointer stays valid until the next `CV_get_triangle_strip_vertices` call on the same handle.
+- From C: the pointer stays valid until the next `CV_get_triangle_vertices` call on the same handle.
 
 ## Why a plain fill is wrong
 
@@ -52,7 +52,7 @@ To draw the mask onto part of the screen (or one eye of a stereo layout), apply 
 ```c
 // once per frame, after fetching the vertices
 float *v; size_t count;
-if (!CV_get_triangle_strip_vertices(handle, frame, &v, &count)) return;
+if (!CV_get_triangle_vertices(handle, frame, &v, &count)) return;
 glBindBuffer(GL_ARRAY_BUFFER, vbo);
 glBufferData(GL_ARRAY_BUFFER, count * sizeof(float), v, GL_STREAM_DRAW);
 

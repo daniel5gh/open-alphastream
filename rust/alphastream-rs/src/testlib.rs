@@ -37,7 +37,7 @@ pub fn create_test_asvp(frame_count: u32) -> Result<NamedTempFile, DeserializerE
         let frame = FrameData {
             polystream: channel_data,
             bitmap: None,
-            triangle_strip: None,
+            triangle_vertices: None,
         };
         writer.add_frame(frame);
     }
@@ -67,7 +67,7 @@ pub fn create_test_asvr(
         let frame = FrameData {
             polystream: channel_data,
             bitmap: None,
-            triangle_strip: None,
+            triangle_vertices: None,
         };
         writer.add_frame(frame);
     }

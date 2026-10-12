@@ -1,7 +1,7 @@
-# Rasterization of Polystreams to R8 Alpha Masks or Triangle Strips
+# Rasterization of Polystreams to R8 Alpha Masks or Triangle Lists
 
 ## Objective
-Implement optional rasterization of polygon streams into R8 alpha bit masks or triangle strips.
+Implement optional rasterization of polygon streams into R8 alpha bit masks or triangle lists.
 
 ## Input
 Polystreams from ASVP/ASVR decoded content.
@@ -10,7 +10,7 @@ Polystreams from ASVP/ASVR decoded content.
 Even-odd winding.
 
 ## Output
-R8 alpha masks or triangle strips, top-left origin, row-major for masks.
+R8 alpha masks or triangle lists, top-left origin, row-major for masks.
 
 ## Coordinate Mapping
 To target width/height.
@@ -67,7 +67,7 @@ To target width/height.
   ```
 - Clipping, bounds checks, and writing R8 buffer.
 - Unit tests with golden outputs derived from Python.
-- Optional rasterization and storage of triangle strips.
+- Optional rasterization and storage of triangle lists.
 
 ## Acceptance Criteria
 Bitwise parity with Python reference.

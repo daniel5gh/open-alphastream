@@ -86,11 +86,11 @@ const void *CV_get_frame(struct AlphaStreamCHandle *handle, unsigned long long f
 // The vertices form a triangle LIST (3 vertices per triangle, draw with list topology, not strip)
 // in the 2048x1024 source space. The triangles are fans of possibly concave polygons, so they must
 // be drawn with an even-odd stencil (invert, then cover); see docs/TRIANGLE_RENDERING.md.
-// In C#: float* vertices; IntPtr count; bool success = CV_get_triangle_strip_vertices(handle, frame, &vertices, &count);
-bool CV_get_triangle_strip_vertices(struct AlphaStreamCHandle *handle,
-                                    unsigned long long frame_index,
-                                    const float **out_vertices,
-                                    size_t *out_count);
+// In C#: float* vertices; IntPtr count; bool success = CV_get_triangle_vertices(handle, frame, &vertices, &count);
+bool CV_get_triangle_vertices(struct AlphaStreamCHandle *handle,
+                              unsigned long long frame_index,
+                              const float **out_vertices,
+                              size_t *out_count);
 
 #ifdef __cplusplus
 }  // extern "C"

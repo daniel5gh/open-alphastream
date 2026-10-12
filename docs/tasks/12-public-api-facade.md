@@ -25,10 +25,10 @@ fn get_frame<'a>(&'a mut self) -> Result<Option<&'a Frame>, Error>
 Retrieves the next frame, with lifetime tied to self.
 
 ```rust
-fn get_triangle_strip_vertices(&self, frame_index: usize) -> Result<Vec<f32>, Error>
+fn get_triangle_vertices(&self, frame_index: usize) -> Result<Vec<f32>, Error>
 ```
 
-Retrieves the vertex positions for the specified frame in triangle strip order, suitable for graphics APIs like wgpu with TriangleStrip topology.
+Retrieves the vertex positions for the specified frame as a triangle list (three vertices per triangle), suitable for graphics APIs like wgpu with TriangleList topology.
 
 ```rust
 fn last_error(&self) -> Option<&Error>

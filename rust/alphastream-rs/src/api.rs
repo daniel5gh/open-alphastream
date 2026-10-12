@@ -240,14 +240,14 @@ impl Unpin for ReaderWrapper {}
 
 /// Processing mode for rasterization
 /// This enum tells the system what kind of output to generate from the raw polystream data.
-/// Bitmap creates a grayscale mask image, TriangleStrip creates 3D geometry data, Both does both.
+/// Bitmap creates a grayscale mask image, Triangles creates 3D geometry data, Both does both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessingMode {
     /// Generate only bitmap (R8 mask) output
     Bitmap,
-    /// Generate only triangle strip vertices for 3D rendering
-    TriangleStrip,
-    /// Generate both bitmap and triangle strip outputs
+    /// Generate only triangle vertices for 3D rendering
+    Triangles,
+    /// Generate both bitmap and triangle outputs
     Both,
 }
 
@@ -262,10 +262,10 @@ pub struct AlphaStreamProcessor {
     scheduler: Arc<Mutex<Scheduler>>,
     /// Deserializer (either ASVR or ASVP format) - handles reading and decrypting/parsing the file format
     deserializer: Arc<Mutex<DeserializerType<ReaderWrapper>>>,
-    /// Output dimensions - width and height of the generated bitmaps/triangle strips
+    /// Output dimensions - width and height of the generated bitmaps/triangle lists
     width: u32,
     height: u32,
-    /// Processing mode - what outputs to generate (bitmap, triangle strip, or both)
+    /// Processing mode - what outputs to generate (bitmap, triangles, or both)
     mode: ProcessingMode,
     /// Async runtime - manages background tasks (like tokio::Runtime)
     runtime: Option<Runtime>,
@@ -391,16 +391,16 @@ impl AlphaStreamProcessor {
         None // Will be available after background processing completes
     }
 
-    /// Get triangle strip vertices for a frame
+    /// Get triangle vertices for a frame
     /// Similar to get_frame but for 3D geometry data. Checks cache first, schedules if needed.
     /// Returns None if not ready yet, allowing non-blocking operation.
-    pub async fn get_triangle_strip_vertices(&self, frame_index: usize) -> Option<Vec<f32>> {
+    pub async fn get_triangle_vertices(&self, frame_index: usize) -> Option<Vec<f32>> {
         // Update play head position for seek detection
         self.cache.update_play_head(frame_index);
 
         if let Some(frame_data) = self.cache.get(frame_index) { // Cache check
-            if frame_data.triangle_strip.is_some() {
-                return frame_data.triangle_strip.clone(); // Return cached vertices
+            if frame_data.triangle_vertices.is_some() {
+                return frame_data.triangle_vertices.clone(); // Return cached vertices
             }
         }
         // Schedule processing
@@ -484,7 +484,7 @@ impl AlphaStreamProcessor {
                             };
                             let (_channel_count, channel_sizes, channel_data) = AlphaStreamProcessor::parse_polystream(&frame_data.polystream);
                             let mut bitmap = None;
-                            let mut triangle_strip = None;
+                            let mut triangle_vertices = None;
                             if matches!(mode, ProcessingMode::Bitmap | ProcessingMode::Both) {
                                 // All channels share one even-odd fill so nested channels form holes
                                 let channels = channel_sizes.iter().scan(0usize, |offset, &size| {
@@ -494,22 +494,22 @@ impl AlphaStreamProcessor {
                                 });
                                 bitmap = Some(PolystreamRasterizer::rasterize_channels(channels, width, height));
                             }
-                            if matches!(mode, ProcessingMode::TriangleStrip | ProcessingMode::Both) {
+                            if matches!(mode, ProcessingMode::Triangles | ProcessingMode::Both) {
                                 let mut vertices = Vec::new();
                                 let mut offset = 0;
                                 for &size in &channel_sizes {
                                     let channel_data_slice = &channel_data[offset..offset + size as usize];
-                                    let channel_strip = PolystreamRasterizer::polystream_to_triangle_strip(channel_data_slice);
-                                    vertices.extend(channel_strip);
+                                    let channel_triangles = PolystreamRasterizer::polystream_to_triangles(channel_data_slice);
+                                    vertices.extend(channel_triangles);
                                     offset += size as usize;
                                 }
-                                triangle_strip = Some(vertices);
+                                triangle_vertices = Some(vertices);
                             }
                             let processed_frame = FrameData {
                                 polystream: frame_data.polystream,
                                 // clone here?
                                 bitmap,
-                                triangle_strip,
+                                triangle_vertices,
                             };
                             
                             // Check generation before inserting - discard stale results
@@ -651,9 +651,9 @@ mod tests {
         let frame = processor.get_frame(0, 16, 16).await;
         assert!(frame.is_some()); // Accept only Some, do not unwrap None or Err
 
-        let _ = processor.get_triangle_strip_vertices(0).await;
+        let _ = processor.get_triangle_vertices(0).await;
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        let vertices = processor.get_triangle_strip_vertices(0).await.unwrap();
+        let vertices = processor.get_triangle_vertices(0).await.unwrap();
         assert_eq!(vertices.len(), 174);
     }
 
@@ -695,7 +695,7 @@ mod tests {
         let frame_data = crate::FrameData {
             polystream: vec![1, 0, 0, 0, 0], // minimal polystream
             bitmap: Some(vec![255; 256]),
-            triangle_strip: Some(vec![0.0; 12]),
+            triangle_vertices: Some(vec![0.0; 12]),
         };
         processor.cache.insert(0, frame_data);
 
@@ -703,8 +703,8 @@ mod tests {
         let bitmap = processor.get_frame(0, 16, 16).await.unwrap();
         assert_eq!(bitmap.len(), 256);
 
-        // Test triangle strip mode
-        let vertices = processor.get_triangle_strip_vertices(0).await.unwrap();
+        // Test triangle mode
+        let vertices = processor.get_triangle_vertices(0).await.unwrap();
         assert_eq!(vertices.len(), 12);
     }
 

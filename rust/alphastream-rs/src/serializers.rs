@@ -51,8 +51,8 @@ pub struct FrameData {
     pub polystream: Vec<u8>,
     /// Processed R8 bitmap data
     pub bitmap: Option<Vec<u8>>,
-    /// Processed triangle strip vertices
-    pub triangle_strip: Option<Vec<f32>>,
+    /// Processed triangle vertices
+    pub triangle_vertices: Option<Vec<f32>>,
 }
 
 pub type MetadataFuture = Pin<Box<dyn Future<Output = Result<Metadata, DeserializerError>> + Send + 'static>>;
@@ -481,7 +481,7 @@ impl<R: AsyncRead + AsyncSeek + Unpin + Send> AlphaStreamDeserializer for ASVRDe
                 // polystream includes all channels and the header
                 polystream: decompressed,
                 bitmap: None,
-                triangle_strip: None,
+                triangle_vertices: None,
             })
         })
     }
@@ -617,7 +617,7 @@ impl<R: AsyncRead + AsyncSeek + Unpin + Send> AlphaStreamDeserializer for ASVPDe
             Ok(FrameData {
                 polystream: decompressed,
                 bitmap: None,
-                triangle_strip: None,
+                triangle_vertices: None,
             })
         })
     }
@@ -724,12 +724,12 @@ mod tests {
             FrameData {
                 polystream: make_frame_payload(&[0x01, 0x02, 0x03, 0x04]),
                 bitmap: None,
-                triangle_strip: None,
+                triangle_vertices: None,
             },
             FrameData {
                 polystream: make_frame_payload(&[0x05, 0x06, 0x07, 0x08, 0x09, 0x0A]),
                 bitmap: None,
-                triangle_strip: None,
+                triangle_vertices: None,
             },
         ];
         
@@ -770,17 +770,17 @@ mod tests {
             FrameData {
                 polystream: make_frame_payload(&[0x01, 0x02, 0x03, 0x04]),
                 bitmap: None,
-                triangle_strip: None,
+                triangle_vertices: None,
             },
             FrameData {
                 polystream: make_frame_payload(&[0x05, 0x06, 0x07, 0x08, 0x09, 0x0A]),
                 bitmap: None,
-                triangle_strip: None,
+                triangle_vertices: None,
             },
             FrameData {
                 polystream: make_frame_payload(&[0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
                 bitmap: None,
-                triangle_strip: None,
+                triangle_vertices: None,
             },
         ];
         
@@ -888,7 +888,7 @@ mod tests {
             serializer.add_frame(FrameData {
                 polystream: make_frame_payload(&payload_for(i)),
                 bitmap: None,
-                triangle_strip: None,
+                triangle_vertices: None,
             });
         }
         let written = serializer.write_all().unwrap();
