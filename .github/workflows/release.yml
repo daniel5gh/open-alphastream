@@ -1,0 +1,121 @@
+name: Release
+
+# Builds the C library and CLI tools for each platform and publishes them as a
+# GitHub release. Nothing is published to crates.io.
+#
+# Trigger: push a tag like v0.1.0 (a tag with a suffix such as v0.1.0-rc1 is
+# marked as a pre-release). Can also be run manually to build the artifacts
+# without creating a release.
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CRATE_DIR: rust/alphastream-rs
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust/alphastream-rs
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Tag matches crate version
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+        tag="${GITHUB_REF_NAME#v}"
+        if [ "${tag%%-*}" != "$version" ]; then
+          echo "tag $GITHUB_REF_NAME does not match crate version $version" >&2
+          exit 1
+        fi
+    - run: cargo test --all-features --locked
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  name: linux-x86_64,   kind: unix }
+        - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: linux-aarch64,  kind: unix }
+        - { os: macos-latest,     target: aarch64-apple-darwin,      name: macos-aarch64,  kind: unix }
+        - { os: macos-latest,     target: x86_64-apple-darwin,       name: macos-x86_64,   kind: unix }
+        - { os: windows-latest,   target: x86_64-pc-windows-msvc,    name: windows-x86_64, kind: windows }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: rust/alphastream-rs
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+    - uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.target }}
+    - name: Build
+      run: cargo build --release --locked --all-features --target ${{ matrix.target }}
+    - name: Package
+      env:
+        TARGET: ${{ matrix.target }}
+        NAME: ${{ matrix.name }}
+        KIND: ${{ matrix.kind }}
+      run: |
+        version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+        dir="alphastream-${version}-${NAME}"
+        out="target/${TARGET}/release"
+        mkdir -p "$dir/lib" "$dir/bin" "$dir/include"
+        if [ "$KIND" = windows ]; then
+          cp "$out/alphastream.dll" "$out/alphastream.dll.lib" "$out/alphastream.lib" "$dir/lib/"
+          cp "$out/demo.exe" "$out/keysearch.exe" "$dir/bin/"
+        elif [ "$NAME" = macos-aarch64 ] || [ "$NAME" = macos-x86_64 ]; then
+          cp "$out/libalphastream.dylib" "$out/libalphastream.a" "$dir/lib/"
+          cp "$out/demo" "$out/keysearch" "$dir/bin/"
+        else
+          cp "$out/libalphastream.so" "$out/libalphastream.a" "$dir/lib/"
+          cp "$out/demo" "$out/keysearch" "$dir/bin/"
+        fi
+        cp include/alphastream.h "$dir/include/"
+        cp LICENSE README.md "$dir/"
+        if [ "$KIND" = windows ]; then
+          7z a -tzip "$dir.zip" "$dir" > /dev/null
+          echo "ASSET=$dir.zip" >> "$GITHUB_ENV"
+        else
+          tar czf "$dir.tar.gz" "$dir"
+          echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"
+        fi
+    - uses: actions/upload-artifact@v4
+      with:
+        name: alphastream-${{ matrix.name }}
+        path: ${{ env.CRATE_DIR }}/${{ env.ASSET }}
+        if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: dist
+        merge-multiple: true
+    - name: Checksums
+      run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+    - name: Create GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        flags=""
+        case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+        gh release create "$GITHUB_REF_NAME" dist/*           --repo "$GITHUB_REPOSITORY"           --title "$GITHUB_REF_NAME"           --generate-notes $flags

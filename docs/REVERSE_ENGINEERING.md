@@ -374,10 +374,10 @@ Because the header test needs only 18 bytes and one scrypt (~75 ms on one core, 
 - Verified: the 85342 file is found in a search of 85000–86000 in 8 s.
 - Real find: older full-length files (`pov_mask.asvr` and `no_pov_mask.asvr` of a March 2024 scene) do not use the `1.0.0` from the API metadata. They decrypt with **`version = "0.2.3"`**, their usual scene ID, base name as usual. They were found by trying `0.a.b` strings for the known ID. So older content can carry version strings that the current API no longer reports.
 
-The Rust crate implements this as `libalphastream::keysearch` (`find_key_inputs`, `try_key`, `base_name_from_url`) plus a CLI (~470 guesses/s on 32 cores in release builds). For a URL it fetches only the first 18 bytes:
+The Rust crate implements this as `alphastream::keysearch` (feature `keysearch`) (`find_key_inputs`, `try_key`, `base_name_from_url`) plus a CLI (~470 guesses/s on 32 cores in release builds). For a URL it fetches only the first 18 bytes:
 
 ```
-cargo run --release --bin keysearch -- <asvr_path_or_url> [--ids 1-200000] [--versions 1.5.0,1.0.0,0.2.3] [--sweep-versions 1.9.9] [--base-name pov_mask.asvr] [--threads N]
+cargo run --release --features cli --bin keysearch -- <asvr_path_or_url> [--ids 1-200000] [--versions 1.5.0,1.0.0,0.2.3] [--sweep-versions 1.9.9] [--base-name pov_mask.asvr] [--threads N]
 ```
 
 ### `CV_get_frame` in 14.3 does not block

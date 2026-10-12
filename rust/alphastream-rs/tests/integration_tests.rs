@@ -1,6 +1,6 @@
-use libalphastream::*;
-use libalphastream::{CV_create, CV_destroy, CV_init, CV_get_frame, CV_get_triangle_strip_vertices};
-use libalphastream::testlib::create_test_asvr;
+use alphastream::*;
+use alphastream::{CV_create, CV_destroy, CV_init, CV_get_frame, CV_get_triangle_vertices};
+use alphastream::testlib::create_test_asvr;
 // Centralized test utility import
 use crate::testlib::create_test_asvp;
 use std::time::{Duration, Instant};
@@ -39,7 +39,7 @@ async fn test_full_processor_lifecycle() {
 
     let start = TokioInstant::now();
     let vertices = loop {
-        if let Some(v) = processor.get_triangle_strip_vertices(0).await {
+        if let Some(v) = processor.get_triangle_vertices(0).await {
             break v;
         }
         if start.elapsed() > tokio::time::Duration::from_millis(1000) {
@@ -58,13 +58,13 @@ async fn test_full_processor_lifecycle() {
         
         #[test]
         fn test_ring_buffer_range_handling() {
-            use libalphastream::FrameCache;
-            use libalphastream::serializers::FrameData;
+            use alphastream::FrameCache;
+            use alphastream::serializers::FrameData;
             // Test ring buffer range behavior (replaces LRU eviction test)
             let cache = FrameCache::new(3);
-            let d0 = FrameData { polystream: vec![0], bitmap: None, triangle_strip: None };
-            let d1 = FrameData { polystream: vec![1], bitmap: None, triangle_strip: None };
-            let d2 = FrameData { polystream: vec![2], bitmap: None, triangle_strip: None };
+            let d0 = FrameData { polystream: vec![0], bitmap: None, triangle_vertices: None };
+            let d1 = FrameData { polystream: vec![1], bitmap: None, triangle_vertices: None };
+            let d2 = FrameData { polystream: vec![2], bitmap: None, triangle_vertices: None };
             
             // Insert frames 0, 1, 2 (all within initial range [0, 3))
             cache.insert(0, d0);
@@ -75,7 +75,7 @@ async fn test_full_processor_lifecycle() {
             assert!(cache.contains(&2));
             
             // Frame 3 is out of range initially
-            let d3 = FrameData { polystream: vec![3], bitmap: None, triangle_strip: None };
+            let d3 = FrameData { polystream: vec![3], bitmap: None, triangle_vertices: None };
             assert!(!cache.insert(3, d3.clone())); // Should fail, out of range
             
             // Advance start to make room for frame 3
@@ -92,9 +92,9 @@ async fn test_full_processor_lifecycle() {
         
         #[test]
         fn test_scheduler_prefetch_and_backpressure_edge() {
-            use libalphastream::FrameCache;
-            use libalphastream::serializers::FrameData;
-            use libalphastream::scheduler::Scheduler;
+            use alphastream::FrameCache;
+            use alphastream::serializers::FrameData;
+            use alphastream::scheduler::Scheduler;
             use std::sync::Arc;
             let cache = Arc::new(FrameCache::new(4));
             let mut scheduler = Scheduler::new();
@@ -106,7 +106,7 @@ async fn test_full_processor_lifecycle() {
                 cache.insert(i, FrameData {
                     polystream: vec![i as u8],
                     bitmap: None,
-                    triangle_strip: None,
+                    triangle_vertices: None,
                 });
             }
             
@@ -127,7 +127,7 @@ async fn test_full_processor_lifecycle() {
             
             // Backpressure: simulate max_concurrent by not calling complete_task()
             // Schedule another task and try to get it without completing the previous one
-            scheduler.schedule_task(libalphastream::scheduler::Task::new(4));
+            scheduler.schedule_task(alphastream::scheduler::Task::new(4));
             // With max_concurrent defaulting to 16, we need to exhaust it
             // For simplicity, just verify the mechanism works
             scheduler.set_max_concurrent(1);
@@ -139,8 +139,8 @@ async fn test_full_processor_lifecycle() {
         fn test_cache_thread_safety_contention() {
             use std::sync::Arc;
             use std::thread;
-            use libalphastream::FrameCache;
-            use libalphastream::serializers::FrameData;
+            use alphastream::FrameCache;
+            use alphastream::serializers::FrameData;
             let cache = Arc::new(FrameCache::new(8));
             let mut handles = vec![];
             for i in 0..8 {
@@ -151,7 +151,7 @@ async fn test_full_processor_lifecycle() {
                         let data = FrameData {
                             polystream: vec![idx as u8],
                             bitmap: Some(vec![idx as u8; 8]),
-                            triangle_strip: Some(vec![idx as f32; 8]),
+                            triangle_vertices: Some(vec![idx as f32; 8]),
                         };
                         cache_clone.insert(idx, data);
                         let _ = cache_clone.get(idx);
@@ -169,9 +169,9 @@ async fn test_full_processor_lifecycle() {
         fn test_scheduler_cache_integration_concurrent() {
             use std::sync::Arc;
             use std::thread;
-            use libalphastream::FrameCache;
-            use libalphastream::serializers::FrameData;
-            use libalphastream::scheduler::{Scheduler};
+            use alphastream::FrameCache;
+            use alphastream::serializers::FrameData;
+            use alphastream::scheduler::{Scheduler};
             let cache = Arc::new(FrameCache::new(5));
             let mut scheduler = Scheduler::new();
             scheduler.set_cache(Arc::clone(&cache));
@@ -182,7 +182,7 @@ async fn test_full_processor_lifecycle() {
                     let data = FrameData {
                         polystream: vec![i as u8],
                         bitmap: Some(vec![i as u8; 5]),
-                        triangle_strip: Some(vec![i as f32; 5]),
+                        triangle_vertices: Some(vec![i as f32; 5]),
                     };
                     cache_clone.insert(i, data);
                 }));
@@ -238,14 +238,14 @@ fn test_c_abi_integration() {
         assert_eq!(frame_data.len(), 1024);
     }
 
-    // Get triangle strip
+    // Get triangles
     let mut vertices: *const f32 = std::ptr::null();
     let mut count: usize = 0;
     let start = Instant::now();
-    let mut success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+    let mut success = CV_get_triangle_vertices(handle, 0, &mut vertices, &mut count);
     while !success && start.elapsed() < Duration::from_millis(500) {
         std::thread::sleep(Duration::from_millis(10));
-        success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+        success = CV_get_triangle_vertices(handle, 0, &mut vertices, &mut count);
     }
     assert!(success);
     assert_eq!(count, 174);
@@ -271,7 +271,7 @@ fn test_cache_scheduler_integration() {
         let frame_data = serializers::FrameData {
             polystream: vec![task.frame_index as u8],
             bitmap: Some(vec![255; 100]),
-            triangle_strip: Some(vec![0.0; 10]),
+            triangle_vertices: Some(vec![0.0; 10]),
         };
         cache.insert(task.frame_index, frame_data);
         scheduler.complete_task();
@@ -292,7 +292,7 @@ fn test_cache_scheduler_integration() {
         cache2.insert(i, serializers::FrameData {
             polystream: vec![i as u8],
             bitmap: Some(vec![255; 100]),
-            triangle_strip: Some(vec![0.0; 10]),
+            triangle_vertices: Some(vec![0.0; 10]),
         });
     }
     scheduler2.prefetch(2); // cache is full, should not schedule
@@ -333,7 +333,7 @@ fn test_concurrent_access() {
             let data = FrameData {
                 polystream: vec![i as u8],
                 bitmap: Some(vec![i as u8; 64]),
-                triangle_strip: Some(vec![i as f32; 32]),
+                triangle_vertices: Some(vec![i as f32; 32]),
             };
             cache_clone.insert(i, data);
 

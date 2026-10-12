@@ -1,7 +1,7 @@
 # Format Integration with Scheduler
 
 ## Objective
-Integrate ASVR/ASVP parsing with the scheduler and cache for on-demand polystream to rasterized frame/triangle-strip flow.
+Integrate ASVR/ASVP parsing with the scheduler and cache for on-demand polystream to rasterized frame/triangle-list flow.
 
 ## Scope
 Describe the on-demand flow: user requests frame -> lib checks cache -> spawns tasks to read file range on demand -> decrypt/decompress -> rasterize -> cache/store.

@@ -4,8 +4,11 @@ use thiserror::Error;
 use bytes::Bytes;
 use std::future::Future;
 use std::pin::Pin;
+#[cfg(feature = "http")]
 use reqwest::{Client, header::RANGE};
+#[cfg(feature = "http")]
 use std::time::Duration;
+#[cfg(feature = "http")]
 use tokio::time::sleep;
 use std::fs::File;
 use memmap2::Mmap;
@@ -210,6 +213,7 @@ fn open_local(uri: &str) -> Result<LocalReader, TransportError> {
 }
 
 // HttpTransport implementation using reqwest for HTTP-based transport with Range requests
+#[cfg(feature = "http")]
 pub struct HttpReader {
     // The URL of the resource to read from
     url: String,
@@ -219,8 +223,10 @@ pub struct HttpReader {
     content_length: u64,
 }
 
+#[cfg(feature = "http")]
 pub struct HttpTransport;
 
+#[cfg(feature = "http")]
 impl Transport for HttpTransport {
     type Reader = HttpReader;
 

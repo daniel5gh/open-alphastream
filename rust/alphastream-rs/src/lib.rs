@@ -1,4 +1,4 @@
-//! alphastream-rs — C ABI for .NET P/Invoke compatibility
+//! alphastream — C ABI for .NET P/Invoke compatibility
 //!
 //! This module provides a C-compatible interface that can be called from other languages like C# via P/Invoke.
 //! All functions are marked with #[no_mangle] and extern "C" to prevent name mangling and ensure C calling convention.
@@ -6,7 +6,7 @@
 //! # FFI Buffer Ownership Rules
 //!
 //! - All pointers returned by FFI functions (e.g., frame buffers, vertex arrays) are owned by the library and must not be freed by the caller.
-//! - Each call to `CV_get_frame` or `CV_get_triangle_strip_vertices` invalidates the previous buffer pointer for that handle.
+//! - Each call to `CV_get_frame` or `CV_get_triangle_vertices` invalidates the previous buffer pointer for that handle.
 //! - The buffer remains valid until the next call to the same function or until `CV_destroy` is called.
 //! - Do not retain or free returned pointers after the handle is destroyed.
 //!
@@ -23,7 +23,7 @@
 //! - Do not access the internals of the handle struct from C code; treat it as opaque.
 //!
 //! - All pointers returned by FFI functions (e.g., frame buffers, vertex arrays) are owned by the library and must not be freed by the caller.
-//! - Each call to `CV_get_frame` or `CV_get_triangle_strip_vertices` invalidates the previous buffer pointer for that handle.
+//! - Each call to `CV_get_frame` or `CV_get_triangle_vertices` invalidates the previous buffer pointer for that handle.
 //! - The buffer remains valid until the next call to the same function or until `CV_destroy` is called.
 //! - Do not retain or free returned pointers after the handle is destroyed.
 //!
@@ -39,7 +39,9 @@ pub mod scheduler;
 pub mod rasterizer;
 pub mod cache;
 pub mod api;
+#[cfg(any(test, feature = "testlib"))]
 pub mod testlib;
+#[cfg(any(test, feature = "keysearch"))]
 pub mod keysearch;
 
 /// Handle structure for C API
@@ -86,8 +88,8 @@ pub use cache::{FrameCache};
 pub use serializers::{FrameData};
 pub use scheduler::{Scheduler, Task};
 // Static C strings for name/version
-static PLUGIN_NAME: &str = "alphastream-rs";
-static PLUGIN_VERSION: &str = "0.1.0";
+static PLUGIN_NAME: &str = env!("CARGO_PKG_NAME");
+static PLUGIN_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn static_cstr(s: &str) -> *const c_char {
     // Leak a CString to keep pointer valid for process lifetime
@@ -308,9 +310,9 @@ pub extern "C" fn CV_get_frame(handle: *mut AlphaStreamCHandle, frame_index: c_u
 /// The vertices form a triangle LIST (3 vertices per triangle, draw with list topology, not strip)
 /// in the 2048x1024 source space. The triangles are fans of possibly concave polygons, so they must
 /// be drawn with an even-odd stencil (invert, then cover); see docs/TRIANGLE_RENDERING.md.
-/// In C#: float* vertices; IntPtr count; bool success = CV_get_triangle_strip_vertices(handle, frame, &vertices, &count);
+/// In C#: float* vertices; IntPtr count; bool success = CV_get_triangle_vertices(handle, frame, &vertices, &count);
 #[no_mangle]
-pub extern "C" fn CV_get_triangle_strip_vertices(handle: *mut AlphaStreamCHandle, frame_index: c_ulonglong, out_vertices: *mut *const f32, out_count: *mut usize) -> bool {
+pub extern "C" fn CV_get_triangle_vertices(handle: *mut AlphaStreamCHandle, frame_index: c_ulonglong, out_vertices: *mut *const f32, out_count: *mut usize) -> bool {
     if handle.is_null() || out_vertices.is_null() || out_count.is_null() {
         return false;
     }
@@ -319,7 +321,7 @@ pub extern "C" fn CV_get_triangle_strip_vertices(handle: *mut AlphaStreamCHandle
         chandle.clear_error();
         if let Some(proc) = &chandle.processor {
             if let Some(rt) = &chandle.runtime {
-                return match rt.block_on(async { proc.get_triangle_strip_vertices(frame_index as usize).await }) {
+                return match rt.block_on(async { proc.get_triangle_vertices(frame_index as usize).await }) {
                     Some(vertices) => {
                         if !chandle.last_vertices_ptr.is_null() {
                             drop(Box::from_raw(chandle.last_vertices_ptr));
@@ -469,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn test_c_abi_triangle_strip() {
+    fn test_c_abi_triangle_vertices() {
         let handle = CV_create();
 
         // Initialize with a real test file
@@ -493,15 +495,15 @@ mod tests {
             30000,
         );
 
-        // Get triangle strip (currently returns empty)
+        // Get triangles (currently returns empty)
         let mut vertices: *const f32 = std::ptr::null();
         let mut count: usize = 0;
 
         // get frame 0, trigger processing
-        let _ = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+        let _ = CV_get_triangle_vertices(handle, 0, &mut vertices, &mut count);
         // sleep for 500ms to allow frame to be processed
         std::thread::sleep(std::time::Duration::from_millis(500));
-        let success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+        let success = CV_get_triangle_vertices(handle, 0, &mut vertices, &mut count);
         assert_eq!(success, true);
         assert_eq!(count, 174);
         assert!(!vertices.is_null());
@@ -521,7 +523,7 @@ mod tests {
 
         let mut vertices: *const f32 = std::ptr::null();
         let mut count: usize = 0;
-        let success = CV_get_triangle_strip_vertices(std::ptr::null_mut(), 0, &mut vertices, &mut count);
+        let success = CV_get_triangle_vertices(std::ptr::null_mut(), 0, &mut vertices, &mut count);
         assert!(!success);
     }
 
@@ -537,19 +539,19 @@ mod tests {
     }
 
     #[test]
-    fn test_c_abi_triangle_strip_uninitialized_processor() {
+    fn test_c_abi_triangle_vertices_uninitialized_processor() {
         let handle = CV_create();
         // Do not initialize
         let mut vertices: *const f32 = std::ptr::null();
         let mut count: usize = 0;
-        let success = CV_get_triangle_strip_vertices(handle, 0, &mut vertices, &mut count);
+        let success = CV_get_triangle_vertices(handle, 0, &mut vertices, &mut count);
         assert!(!success);
         assert_eq!(CV_get_last_error_code(handle), 4); // Processor not initialized
         CV_destroy(handle);
     }
 
     #[test]
-    fn test_c_abi_triangle_strip_out_of_range() {
+    fn test_c_abi_triangle_vertices_out_of_range() {
         let handle = CV_create();
 
         // Initialize with a real test file
@@ -574,7 +576,7 @@ mod tests {
         );
         let mut vertices: *const f32 = std::ptr::null();
         let mut count: usize = 0;
-        let success = CV_get_triangle_strip_vertices(handle, 10001, &mut vertices, &mut count);
+        let success = CV_get_triangle_vertices(handle, 10001, &mut vertices, &mut count);
         assert!(!success);
         assert_eq!(CV_get_last_error_code(handle), 5); // Vertices not found or not ready
         CV_destroy(handle);

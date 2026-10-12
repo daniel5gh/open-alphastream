@@ -1,19 +1,27 @@
 [package]
-name = "alphastream-rs"
+name = "alphastream"
 version = "0.1.0"
 edition = "2021"
+description = "Open implementation of libalphastream: ASVR/ASVP alpha-mask stream reader, rasterizer and C ABI"
+license = "MIT"
+repository = "https://github.com/daniel5gh/open-alphastream"
+homepage = "https://github.com/daniel5gh/open-alphastream"
+readme = "README.md"
+keywords = ["alphastream", "asvr", "vr", "alpha-mask", "ffi"]
+categories = ["multimedia::video", "rendering", "api-bindings"]
+exclude = ["output*.mp4", "target/", ".gitignore"]
 
 [lib]
-name = "libalphastream"
+name = "alphastream"
 path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 # Async runtime (enabled only needed features for smaller binary and faster compile, might need less still)
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "time", "io-util"] }
 
-# HTTP client
-reqwest = { version = "0.12.28" }
+# HTTP client (feature `http`); rustls so no system OpenSSL is needed
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls"], optional = true }
 
 # Async utilities
 futures = "0.3"
@@ -24,7 +32,6 @@ thiserror = "2.0"
 
 # File and memory mapping
 memmap2 = "0.9"
-tempfile = "3"
 
 # Cryptography
 chacha20 = "0.9.1"
@@ -33,10 +40,25 @@ scrypt = "0.11"
 # Compression
 flate2 = "1.0"
 
-# Used in demo bin
-ctrlc = "3"
+# Used in demo bin (feature `cli`)
+ctrlc = { version = "3", optional = true }
+
+# Test helpers (feature `testlib`)
+tempfile = { version = "3", optional = true }
+
+[features]
+default = ["http"]
+# Fetch ASVR/ASVP over HTTP(S): `HttpTransport` and http(s):// URIs in the processor API.
+http = ["dep:reqwest"]
+# `alphastream::testlib` helpers for generating synthetic ASVR/ASVP files.
+testlib = ["dep:tempfile"]
+# `alphastream::keysearch` scene-id / version recovery for encrypted ASVR files.
+keysearch = []
+# Command line tools (`demo`, `keysearch`).
+cli = ["http", "keysearch", "dep:ctrlc"]
 
 [dev-dependencies]
+tempfile = "3"
 criterion = "0.8"
 proptest = "1"
 
@@ -44,10 +66,16 @@ proptest = "1"
 name = "cache_benchmark"
 harness = false
 
+[[test]]
+name = "integration_tests"
+required-features = ["testlib"]
+
 [[bin]]
 name = "demo"
 path = "src/bin/demo.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "keysearch"
 path = "src/bin/keysearch.rs"
+required-features = ["cli"]

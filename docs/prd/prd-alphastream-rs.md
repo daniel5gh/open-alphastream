@@ -137,7 +137,7 @@ The following C ABI functions are provided for .NET P/Invoke and C interoperabil
 | `CV_get_frame_size` | `unsigned int CV_get_frame_size(*mut AlphaStreamHandle)` | Returns the frame size (width * height). 0 if handle is null. |
 | `CV_init` | `bool CV_init(*mut AlphaStreamHandle, const char* base_url, unsigned int scene_id, unsigned int width, unsigned int height, const char* version, unsigned int start_frame, unsigned int l0_buffer_length, unsigned int l1_buffer_length, unsigned int l1_buffer_init_length, unsigned int init_timeout_ms, unsigned int data_timeout_ms)` | Initializes the handle with connection and stream parameters. Returns true on success. |
 | `CV_get_frame` | `const void* CV_get_frame(*mut AlphaStreamHandle, unsigned long long frame_index)` | Returns a pointer to the R8 mask buffer for the requested frame, or null on error. |
-| `CV_get_triangle_strip_vertices` | `bool CV_get_triangle_strip_vertices(*mut AlphaStreamHandle, unsigned long long frame_index, float** out_vertices, size_t* out_count)` | Returns triangle strip vertex data for the frame. Returns true on success, false on error. |
+| `CV_get_triangle_vertices` | `bool CV_get_triangle_vertices(*mut AlphaStreamHandle, unsigned long long frame_index, float** out_vertices, size_t* out_count)` | Returns triangle list vertex data for the frame. Returns true on success, false on error. |
 
 - All functions require a valid handle unless otherwise noted.
 - The `*mut AlphaStreamHandle` type is fully opaque to the API user and should be treated as a generic pointer (e.g., `void*` in C or `IntPtr` in C#). No assumptions should be made about its structure or contents.
@@ -231,8 +231,8 @@ fn clear_error(&mut self);
 fn load_source(&mut self, source: SourceConfig) -> Result<(), Error>;
 fn close(&mut self);
 
-// Triangle strip access
-fn get_triangle_strip_vertices(&self, frame_index: u32) -> Result<Vec<f32>, Error>;
+// Triangle list access
+fn get_triangle_vertices(&self, frame_index: u32) -> Result<Vec<f32>, Error>;
 ```
 
 ### Data Models
@@ -291,7 +291,7 @@ Key optimizations that achieved this:
 - Ensure all error paths are covered by tests
 - Provide integration tests for all transports
 - Document all public APIs and error codes
-- Reference [docs/tasks/10-rasterization-polystreams.md](../tasks/10-rasterization-polystreams.md) for triangle strip details
+- Reference [docs/tasks/10-rasterization-polystreams.md](../tasks/10-rasterization-polystreams.md) for triangle list details
 
 ## AI Implementation Metadata
 ```yaml

@@ -1,14 +1,14 @@
 # Task 09 — Frame Cache Policy
 
 ## Objective
-Specify the frame cache policy for alphastream-rs, including capacity limits, eviction strategy, prefetch interaction, concurrency handling, and storage options (bit masks, triangle strips, or both).
+Specify the frame cache policy for alphastream-rs, including capacity limits, eviction strategy, prefetch interaction, concurrency handling, and storage options (bit masks, triangle lists, or both).
 
 ## Scope
 - Cap: Count-based limit of 512 frames.
 - Eviction: Strict LRU; no pinning.
 - Prefetch Interaction: Bounded by remaining capacity.
 - Concurrency: Atomic stats, low-contention.
-- Storage: Bit masks, triangle strips, or both.
+- Storage: Bit masks, triangle lists, or both.
 
 ## Implementation Checklist
 - LRU index implementation:

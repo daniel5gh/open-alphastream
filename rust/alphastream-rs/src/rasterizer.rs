@@ -89,7 +89,7 @@ impl PolystreamRasterizer {
     /// x,y pairs in the unscaled [`SOURCE_WIDTH`] x [`SOURCE_HEIGHT`] space. Fan triangles of a
     /// concave polygon overlap and extend outside it, so they must be drawn with an even-odd
     /// stencil (invert per fragment, then cover) to get the mask; see `docs/RUST_IMPLEMENTATION.md`.
-    pub fn polystream_to_triangle_strip(polystream: &[u8]) -> Vec<f32> {
+    pub fn polystream_to_triangles(polystream: &[u8]) -> Vec<f32> {
         let mut points: Vec<(i32, i32)> = decode_points(polystream).collect();
         // A closed polygon (last point equals first) adds nothing to the fan
         if points.len() > 1 && points.first() == points.last() {
@@ -446,23 +446,23 @@ mod tests {
             let _ = PolystreamRasterizer::rasterize_channels([a.as_slice(), b.as_slice()], w, h);
         }
         #[test]
-        fn fuzz_triangle_strip_does_not_panic(data in proptest::collection::vec(any::<u8>(), 0..128)) {
-            let _ = PolystreamRasterizer::polystream_to_triangle_strip(&data);
+        fn fuzz_triangle_vertices_does_not_panic(data in proptest::collection::vec(any::<u8>(), 0..128)) {
+            let _ = PolystreamRasterizer::polystream_to_triangles(&data);
         }
     }
 
     #[test]
-    fn test_polystream_to_triangle_strip_triangle() {
+    fn test_polystream_to_triangles_triangle() {
         let data = channel(&[(0, 0), (15, 0), (7, 15), (0, 0)]);
-        let strip = PolystreamRasterizer::polystream_to_triangle_strip(&data);
-        assert_eq!(strip, vec![0.0, 0.0, 15.0, 0.0, 7.0, 15.0]);
+        let triangles = PolystreamRasterizer::polystream_to_triangles(&data);
+        assert_eq!(triangles, vec![0.0, 0.0, 15.0, 0.0, 7.0, 15.0]);
     }
 
     #[test]
-    fn test_triangle_strip_square() {
-        let strip = PolystreamRasterizer::polystream_to_triangle_strip(&square(0, 0, 10));
+    fn test_triangle_vertices_square() {
+        let triangles = PolystreamRasterizer::polystream_to_triangles(&square(0, 0, 10));
         // Triangle list of the fan: (v0, v1, v2), (v0, v2, v3)
-        assert_eq!(strip, vec![0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 0.0, 10.0, 10.0, 0.0, 10.0]);
+        assert_eq!(triangles, vec![0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 0.0, 10.0, 10.0, 0.0, 10.0]);
     }
 
     #[test]

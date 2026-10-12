@@ -16,9 +16,18 @@ jobs:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
-    - name: Build
+    - name: Build (default features)
       run: cargo build --release
+    - name: Build (no default features)
+      run: cargo check --no-default-features --lib
+    - name: Build (all features)
+      run: cargo build --release --all-features
     - name: Test
-      run: cargo test
-    - name: Run benchmarks
-      run: cargo bench
+      run: cargo test --all-features
+    - name: Package (dry run)
+      run: cargo package --locked
+    - name: C header is up to date
+      run: |
+        cargo install cbindgen --locked --version 0.28.0
+        cbindgen --config cbindgen.toml --crate alphastream --output /tmp/alphastream.h
+        diff -u include/alphastream.h /tmp/alphastream.h

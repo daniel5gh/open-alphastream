@@ -1,10 +1,10 @@
-# Triangle Strip Generation from Polystreams
+# Triangle List Generation from Polystreams
 
 ## Objective
-Generate triangle strips from polystreams for caller-side rasterization.
+Generate triangle lists from polystreams for caller-side rasterization.
 
 ## Scope
-Input polystream, output Vec<f32> in triangle strip order (x,y pairs).
+Input polystream, output Vec<f32> as a triangle list (x,y pairs, three vertices per triangle).
 
 ## Deliverables
 Function in rasterizer.rs, tests.
@@ -15,10 +15,10 @@ Function in rasterizer.rs, tests.
 ## Checklist
 - Parse polystream
 - Triangulate
-- Output strip
+- Output triangle list
 
 ## Acceptance Criteria
-Matches rasterizer input, correct strip format.
+Matches rasterizer input, correct triangle list format.
 
 ## References
 - [docs/RUST_IMPLEMENTATION.md](docs/RUST_IMPLEMENTATION.md)

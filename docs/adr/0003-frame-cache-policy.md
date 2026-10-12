@@ -8,7 +8,7 @@ Efficient frame caching is critical for performance and memory usage in alphastr
 
 ## Decision
 - Use a strict LRU (Least Recently Used) eviction policy with a default capacity of 512 frames.
-- Cache stores alpha bit masks and optionally triangle strips, keyed by frame index.
+- Cache stores alpha bit masks and optionally triangle lists, keyed by frame index.
 - Prefetching is implemented using a forward anticipation strategy, preloading future frames based on sequential access patterns.
 - Cache is wrapped in `Arc<RwLock<>>` to ensure thread-safe concurrent access.
 - All cache operations are race-free and validated by concurrent access tests.

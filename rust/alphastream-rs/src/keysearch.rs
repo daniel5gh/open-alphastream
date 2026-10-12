@@ -161,7 +161,7 @@ mod tests {
     fn finds_known_scene_id() {
         let mut writer = ASVRSerializer::new(Vec::new(), 12345, b"1.5.0", b"pov_mask.asvr").unwrap();
         for i in 0..3u8 {
-            writer.add_frame(FrameData { polystream: vec![i; 16], bitmap: None, triangle_strip: None });
+            writer.add_frame(FrameData { polystream: vec![i; 16], bitmap: None, triangle_vertices: None });
         }
         let data = writer.write_all().unwrap();
         let probe = &data[..HEADER_PROBE_LEN];

@@ -417,7 +417,7 @@ mod tests {
         FrameData {
             polystream: vec![id],
             bitmap: None,
-            triangle_strip: None,
+            triangle_vertices: None,
         }
     }
 
