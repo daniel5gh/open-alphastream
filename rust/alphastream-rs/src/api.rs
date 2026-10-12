@@ -64,12 +64,7 @@ impl AlphaStreamProcessorBuilder {
         use std::sync::Arc;
         use tokio::sync::Mutex;
 
-        let reader = if uri.starts_with("http") {
-            let bytes = reqwest::get(uri).await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?;
-            ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
-        } else {
-            ReaderWrapper::File(tokio::fs::File::open(uri).await?)
-        };
+        let reader = open_reader(uri).await?;
         let deserializer_inner = ASVPDeserializer::new(reader).await?;
         let deserializer = Arc::new(Mutex::new(DeserializerType::ASVP(deserializer_inner)));
         let cache = Arc::new(FrameCache::new(self.cache_capacity));
@@ -115,12 +110,7 @@ impl AlphaStreamProcessorBuilder {
         use std::sync::Arc;
         use tokio::sync::Mutex;
 
-        let reader = if uri.starts_with("http") {
-            let bytes = reqwest::get(uri).await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?;
-            ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
-        } else {
-            ReaderWrapper::File(tokio::fs::File::open(uri).await?)
-        };
+        let reader = open_reader(uri).await?;
         let deserializer_inner = ASVRDeserializer::new(reader, scene_id, version, base_url).await?;
         let deserializer = Arc::new(Mutex::new(DeserializerType::ASVR(deserializer_inner)));
         let cache = Arc::new(FrameCache::new(self.cache_capacity));
@@ -192,6 +182,23 @@ impl tokio::io::AsyncSeek for CursorWrapper {
 }
 
 impl Unpin for CursorWrapper {}
+
+/// Opens `uri` as a local file, or downloads it when it is an `http(s)://` URL (feature `http`).
+async fn open_reader(uri: &str) -> Result<ReaderWrapper, DeserializerError> {
+    if uri.starts_with("http") {
+        #[cfg(feature = "http")]
+        {
+            let invalid = |e: reqwest::Error| DeserializerError::InvalidFormat(e.to_string());
+            let bytes = reqwest::get(uri).await.map_err(invalid)?.bytes().await.map_err(invalid)?;
+            return Ok(ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes))));
+        }
+        #[cfg(not(feature = "http"))]
+        return Err(DeserializerError::InvalidFormat(
+            "HTTP support is disabled; enable the `http` feature".to_string(),
+        ));
+    }
+    Ok(ReaderWrapper::File(tokio::fs::File::open(uri).await?))
+}
 
 /// Wrapper for different reader types to unify AsyncRead + AsyncSeek
 pub enum ReaderWrapper {
@@ -286,12 +293,7 @@ impl AlphaStreamProcessor {
         height: u32,
         mode: ProcessingMode,
     ) -> Result<Self, DeserializerError> {
-        let reader = if uri.starts_with("http") {
-            let bytes = reqwest::get(uri).await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?;
-            ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
-        } else {
-            ReaderWrapper::File(tokio::fs::File::open(uri).await?)
-        };
+        let reader = open_reader(uri).await?;
         let deserializer_inner = ASVRDeserializer::new(reader, scene_id, version, base_url).await?;
         let deserializer = Arc::new(Mutex::new(DeserializerType::ASVR(deserializer_inner)));
         let cache = Arc::new(FrameCache::default());
@@ -316,12 +318,7 @@ impl AlphaStreamProcessor {
 
     /// Create a new processor for ASVP (plaintext) files
     pub async fn new_asvp(uri: &str, width: u32, height: u32, mode: ProcessingMode) -> Result<Self, DeserializerError> {
-        let reader = if uri.starts_with("http") {
-            let bytes = reqwest::get(uri).await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?.bytes().await.map_err(|e| DeserializerError::InvalidFormat(e.to_string()))?;
-            ReaderWrapper::Cursor(CursorWrapper(std::io::Cursor::new(bytes)))
-        } else {
-            ReaderWrapper::File(tokio::fs::File::open(uri).await?)
-        };
+        let reader = open_reader(uri).await?;
         let deserializer_inner = ASVPDeserializer::new(reader).await?;
         let deserializer = Arc::new(Mutex::new(DeserializerType::ASVP(deserializer_inner)));
         let cache = Arc::new(FrameCache::default());

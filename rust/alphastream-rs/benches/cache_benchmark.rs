@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use libalphastream::cache::FrameCache;
-use libalphastream::FrameData;
+use alphastream::cache::FrameCache;
+use alphastream::FrameData;
 
 fn bench_cache_operations(c: &mut Criterion) {
     let data = FrameData {
@@ -56,18 +56,18 @@ fn bench_cache_operations(c: &mut Criterion) {
 }
 
 fn bench_scheduler_operations(c: &mut Criterion) {
-    let mut scheduler = libalphastream::scheduler::Scheduler::new();
+    let mut scheduler = alphastream::scheduler::Scheduler::new();
 
     c.bench_function("scheduler_schedule_task", |b| {
         b.iter(|| {
-            let task = libalphastream::scheduler::Task::new(std::hint::black_box(100));
+            let task = alphastream::scheduler::Task::new(std::hint::black_box(100));
             scheduler.schedule_task(task);
         })
     });
 
     // Pre-populate tasks
     for i in 0..10 {
-        let task = libalphastream::scheduler::Task::new(i);
+        let task = alphastream::scheduler::Task::new(i);
         scheduler.schedule_task(task);
     }
 

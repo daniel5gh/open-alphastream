@@ -1,6 +1,6 @@
-use libalphastream::*;
-use libalphastream::{CV_create, CV_destroy, CV_init, CV_get_frame, CV_get_triangle_strip_vertices};
-use libalphastream::testlib::create_test_asvr;
+use alphastream::*;
+use alphastream::{CV_create, CV_destroy, CV_init, CV_get_frame, CV_get_triangle_strip_vertices};
+use alphastream::testlib::create_test_asvr;
 // Centralized test utility import
 use crate::testlib::create_test_asvp;
 use std::time::{Duration, Instant};
@@ -58,8 +58,8 @@ async fn test_full_processor_lifecycle() {
         
         #[test]
         fn test_ring_buffer_range_handling() {
-            use libalphastream::FrameCache;
-            use libalphastream::serializers::FrameData;
+            use alphastream::FrameCache;
+            use alphastream::serializers::FrameData;
             // Test ring buffer range behavior (replaces LRU eviction test)
             let cache = FrameCache::new(3);
             let d0 = FrameData { polystream: vec![0], bitmap: None, triangle_strip: None };
@@ -92,9 +92,9 @@ async fn test_full_processor_lifecycle() {
         
         #[test]
         fn test_scheduler_prefetch_and_backpressure_edge() {
-            use libalphastream::FrameCache;
-            use libalphastream::serializers::FrameData;
-            use libalphastream::scheduler::Scheduler;
+            use alphastream::FrameCache;
+            use alphastream::serializers::FrameData;
+            use alphastream::scheduler::Scheduler;
             use std::sync::Arc;
             let cache = Arc::new(FrameCache::new(4));
             let mut scheduler = Scheduler::new();
@@ -127,7 +127,7 @@ async fn test_full_processor_lifecycle() {
             
             // Backpressure: simulate max_concurrent by not calling complete_task()
             // Schedule another task and try to get it without completing the previous one
-            scheduler.schedule_task(libalphastream::scheduler::Task::new(4));
+            scheduler.schedule_task(alphastream::scheduler::Task::new(4));
             // With max_concurrent defaulting to 16, we need to exhaust it
             // For simplicity, just verify the mechanism works
             scheduler.set_max_concurrent(1);
@@ -139,8 +139,8 @@ async fn test_full_processor_lifecycle() {
         fn test_cache_thread_safety_contention() {
             use std::sync::Arc;
             use std::thread;
-            use libalphastream::FrameCache;
-            use libalphastream::serializers::FrameData;
+            use alphastream::FrameCache;
+            use alphastream::serializers::FrameData;
             let cache = Arc::new(FrameCache::new(8));
             let mut handles = vec![];
             for i in 0..8 {
@@ -169,9 +169,9 @@ async fn test_full_processor_lifecycle() {
         fn test_scheduler_cache_integration_concurrent() {
             use std::sync::Arc;
             use std::thread;
-            use libalphastream::FrameCache;
-            use libalphastream::serializers::FrameData;
-            use libalphastream::scheduler::{Scheduler};
+            use alphastream::FrameCache;
+            use alphastream::serializers::FrameData;
+            use alphastream::scheduler::{Scheduler};
             let cache = Arc::new(FrameCache::new(5));
             let mut scheduler = Scheduler::new();
             scheduler.set_cache(Arc::clone(&cache));

@@ -6,7 +6,7 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use libalphastream::keysearch::{base_name_from_url, find_key_inputs, version_sweep, HEADER_PROBE_LEN};
+use alphastream::keysearch::{base_name_from_url, find_key_inputs, version_sweep, HEADER_PROBE_LEN};
 
 /// Version strings seen so far in the wild (0.2.3 on early-2024 full-length files).
 const DEFAULT_VERSIONS: &[&str] = &["1.5.0", "1.0.0", "0.2.3"];

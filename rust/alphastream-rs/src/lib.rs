@@ -1,4 +1,4 @@
-//! alphastream-rs — C ABI for .NET P/Invoke compatibility
+//! alphastream — C ABI for .NET P/Invoke compatibility
 //!
 //! This module provides a C-compatible interface that can be called from other languages like C# via P/Invoke.
 //! All functions are marked with #[no_mangle] and extern "C" to prevent name mangling and ensure C calling convention.
@@ -39,7 +39,9 @@ pub mod scheduler;
 pub mod rasterizer;
 pub mod cache;
 pub mod api;
+#[cfg(any(test, feature = "testlib"))]
 pub mod testlib;
+#[cfg(any(test, feature = "keysearch"))]
 pub mod keysearch;
 
 /// Handle structure for C API

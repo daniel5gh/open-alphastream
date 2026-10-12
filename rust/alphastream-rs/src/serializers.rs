@@ -869,37 +869,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_asvr_reader_with_real_file() {
-        // Test reading a real ASVR file to verify reader works correctly
-        // Uses the same test file as test_decrypt_frame_1111
-        let test_file_path = "../../test_data/85342/pov_mask.asvr";
-
-        let file = match tokio::fs::File::open(test_file_path).await {
-            Ok(f) => f,
-            Err(_) => {
-                // Skip test if file doesn't exist (CI environments may not have test data)
-                return;
-            }
-        };
+    async fn test_asvr_reader_many_frames_random_access() {
+        use std::io::Cursor;
 
         let scene_id = 85342;
         let version = b"1.5.0";
         let base_url = b"pov_mask.asvr";
+        let frame_count = 2000u32;
 
-        let mut reader = tokio::io::BufReader::new(file);
-        let mut deserializer = ASVRDeserializer::new(&mut reader, scene_id, version, base_url).await
-            .expect("Failed to create ASVRDeserializer from real file");
-        
-        let frame_count = deserializer.frame_count().await.expect("Failed to get frame count");
-        assert!(frame_count > 0, "Real file should have at least one frame");
-        
-        // Try to decode frame 0 and frame 1111 (the hardcoded test case)
-        let frame_0 = deserializer.decode_frame(0).await.expect("Failed to decode frame 0");
-        assert!(!frame_0.polystream.is_empty(), "Frame 0 should not data");
+        // Frames of varying length so offsets in the index are not uniform.
+        let payload_for = |i: u32| -> Vec<u8> {
+            let len = 1 + (i as usize * 7) % 64;
+            (0..len).map(|j| (i as usize + j) as u8).collect()
+        };
 
-        assert_eq!(frame_count, 16375, "Real file should have at 16375 frames");
-        // Frame 1111 is a known test vector
-        let frame_1111 = deserializer.decode_frame(1111).await.expect("Failed to decode frame 1111");
-        assert!(!frame_1111.polystream.is_empty(), "Frame 1111 should have data");
+        let mut serializer = ASVRSerializer::new(Vec::new(), scene_id, version, base_url).unwrap();
+        for i in 0..frame_count {
+            serializer.add_frame(FrameData {
+                polystream: make_frame_payload(&payload_for(i)),
+                bitmap: None,
+                triangle_strip: None,
+            });
+        }
+        let written = serializer.write_all().unwrap();
+
+        let mut deserializer = ASVRDeserializer::new(Cursor::new(written), scene_id, version, base_url)
+            .await
+            .expect("Failed to create ASVRDeserializer");
+        assert_eq!(deserializer.frame_count().await.unwrap(), frame_count);
+
+        // Out-of-order access, including first and last frames and the former
+        // real-file test vector (1111).
+        for i in [1111, 0, frame_count - 1, 500, 1999 / 2, 1] {
+            let payload = payload_for(i);
+            let mut expected = vec![1, 0, 0, 0];
+            expected.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            expected.extend_from_slice(&payload);
+            let frame = deserializer.decode_frame(i).await.unwrap();
+            assert_eq!(frame.polystream, expected, "frame {i} mismatch");
+        }
     }
 }

@@ -1,4 +1,4 @@
-//! Test utilities for alphastream-rs
+//! Test utilities for alphastream
 //! Provides helpers for creating test ASVP files and other test resources
 
 use crate::serializers::{ASVPSerializer, ASVRSerializer, FrameData, DeserializerError};

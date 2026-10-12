@@ -1,5 +1,5 @@
 use std::fs::metadata;
-use libalphastream::api::{AlphaStreamProcessorBuilder, ProcessingMode};
+use alphastream::api::{AlphaStreamProcessorBuilder, ProcessingMode};
 
 use std::process::{self, Command, Stdio};
 use std::io::Write;
