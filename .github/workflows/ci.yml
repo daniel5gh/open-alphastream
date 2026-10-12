@@ -28,6 +28,6 @@ jobs:
       run: cargo package --locked
     - name: C header is up to date
       run: |
-        cargo install cbindgen --locked --version 0.29.0
+        cargo install cbindgen --locked --version 0.28.0
         cbindgen --config cbindgen.toml --crate alphastream --output /tmp/alphastream.h
         diff -u include/alphastream.h /tmp/alphastream.h
